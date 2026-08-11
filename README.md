@@ -103,6 +103,88 @@ data，不包含融資成本、維持率或斷頭價等估算欄位。
 
 結果應為 0。
 
+## 每日成交價與融資估算
+
+在 stock master 建立後，同步最新交易日的 TWSE／TPEx 每日成交資料：
+
+    python -m stock_master price-sync
+
+同步指定交易日：
+
+    python -m stock_master price-sync \
+      --db /tmp/taiwan-stocks.db \
+      --date 2026-08-07
+
+同步最近 30 個日曆日內可取得的每日成交資料：
+
+    python -m stock_master price-history-sync \
+      --db /tmp/taiwan-stocks.db
+
+也可以指定完整日期區間：
+
+    python -m stock_master price-history-sync \
+      --db /tmp/taiwan-stocks.db \
+      --start-date 2026-01-01 \
+      --end-date 2026-08-11
+
+`price_history` 只保存官方 raw facts：成交股數、成交金額、開高低收與成交筆數。
+TWSE 的歷史介面是全市場查詢；TPEx 歷史介面是逐股票、逐月份查詢，provider 會以
+股票主檔作為代碼 universe，並快取同一股票／月份，避免日期回補時重複請求。TPEx
+來源的「成交張數」會乘以 1,000 成為股數，「成交仟元」會乘以 1,000 成為新台幣。
+
+市場成交均價是可重現的精確衍生值，不另存一個容易失真的欄位：
+
+    market_average_price = trade_value / trade_volume
+
+它代表全市場成交均價，只是「新增融資成本」的 proxy，不是券商或使用者帳戶的
+實際融資買進均價。成交股數為 0 時，`market_average_price` 為 NULL。
+
+融資 raw data 與每日成交資料都同步後，可以估算指定股票最近 30 日的融資成本、
+融資維持率與 130% 價格：
+
+    python -m stock_master margin-estimate \
+      --db /tmp/taiwan-stocks.db \
+      --stock-code 2330
+
+估算全部有融資歷史的股票：
+
+    python -m stock_master margin-estimate \
+      --db /tmp/taiwan-stocks.db \
+      --all \
+      --start-date 2026-01-01 \
+      --end-date 2026-08-11 \
+      --margin-ratio 0.60
+
+`margin-estimate` 會將結果寫入獨立的 `margin_estimates` table，並用
+`model_version` 支援日後改成 FIFO、VWAP 或其他模型。V1 使用加權移動平均：
+第一筆仍有融資餘額時以市場成交均價 bootstrap；新增融資以當日市場成交均價
+加入；賣出與現金償還只減少官方餘額，不調整剩餘平均成本；官方
+`margin_balance` 永遠是數量 source of truth。若數量銜接或交易推導餘額與官方值
+不一致，系統只記錄 warning，不會改寫官方 raw data。
+
+若官方成交資料的收盤價是空值（常見於當日沒有成交的股票），該股票／日期的
+維持率估算會記錄 warning 並略過，不會用市場成交均價代替收盤價；其他股票與日期
+仍會繼續估算。若需要嚴格模式，可在程式 API 使用 `skip_missing_close=False`。
+
+若某日完全沒有 `price_history`，但當日沒有新增融資且仍有前日融資餘額，系統會
+沿用前一日 WMA 以維持後續成本計算；該日估算仍會略過，因為缺少收盤價。若缺少
+價格的日期有新增融資，系統會停止該次估算，避免捏造新增成本。
+
+維持率是獨立的 `MarginMaintenanceEstimator` 模型，使用收盤價而非市場成交均價：
+
+    estimated_financing_per_share = estimated_margin_avg_cost * margin_financing_ratio
+    estimated_maintenance_ratio = close_price / estimated_financing_per_share * 100
+    estimated_130_price = estimated_financing_per_share * 1.30
+
+這是研究用估算，不包含券商手續費、利息、完整帳戶擔保品、個別券商維持率規則、
+追繳或斷頭決策。
+
+官方來源：
+
+* TWSE 每日收盤歷史資料：<https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX>
+* TPEx 個股日成交資訊頁：<https://www.tpex.org.tw/zh-tw/mainboard/trading/info/stock-pricing.html>
+* TPEx OpenAPI 文件：<https://www.tpex.org.tw/openapi/>
+
 ## 設定
 
 CLI 可覆寫：
@@ -121,6 +203,8 @@ CLI 可覆寫：
 * TDCC historical query: https://www.tdcc.com.tw/portal/zh/smWeb/qryStock
 * TWSE margin history: https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN
 * TPEx margin history: https://www.tpex.org.tw/web/stock/margin_trading/margin_balance/margin_bal_result.php
+* TWSE price history: https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX
+* TPEx price history: https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock
 
 HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫時性 HTTP／網路錯誤最多嘗試三次。
 

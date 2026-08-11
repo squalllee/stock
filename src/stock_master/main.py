@@ -13,19 +13,24 @@ from stock_master.config import (
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MARGIN_HISTORY_DAYS,
     DEFAULT_MARGIN_HISTORY_REQUEST_DELAY_SECONDS,
+    DEFAULT_MARGIN_FINANCING_RATIO,
+    DEFAULT_MARGIN_MODEL_VERSION,
     DEFAULT_MIN_EXPECTED_TPEX_STOCKS,
     DEFAULT_MIN_EXPECTED_TWSE_STOCKS,
     DEFAULT_RETRY_BACKOFF_SECONDS,
     DEFAULT_TDCC_HISTORY_DAYS,
     DEFAULT_TDCC_HISTORY_REQUEST_DELAY_SECONDS,
     DEFAULT_TDCC_HISTORY_WORKERS,
+    DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_AGENT,
     TDCC_API_URL,
     TDCC_HISTORY_URL,
     TPEX_MARGIN_URL,
+    TPEX_PRICE_URL,
     TPEX_API_URL,
     TWSE_MARGIN_URL,
+    TWSE_PRICE_URL,
     TWSE_API_URL,
 )
 from stock_master.exceptions import StockMasterError
@@ -35,18 +40,25 @@ from stock_master.providers import (
     TDCCDistributionProvider,
     TDCCHistoricalDistributionProvider,
     TextHttpClient,
+    TPExPriceProvider,
     TPExStockProvider,
     TWSEMarginProvider,
+    TWSEPriceProvider,
     TWSEStockProvider,
 )
 from stock_master.repositories import (
     MarginHistoryRepository,
+    MarginEstimateRepository,
+    PriceHistoryRepository,
     StockRepository,
     TDCCDistributionRepository,
 )
 from stock_master.services import (
     MarginHistorySyncService,
     MarginSyncService,
+    MarginCostEstimator,
+    PriceHistorySyncService,
+    PriceSyncService,
     StockSyncService,
     TDCCSyncService,
 )
@@ -320,6 +332,164 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="logging level (default: INFO)",
     )
+
+    price_parser = subparsers.add_parser(
+        "price-sync", help="synchronize one day of daily closing prices"
+    )
+    price_parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite path (default: {DEFAULT_DATABASE_PATH})",
+    )
+    price_parser.add_argument(
+        "--date",
+        type=_parse_iso_date,
+        default=None,
+        help="trading date in YYYY-MM-DD; omit to use the latest date",
+    )
+    price_parser.add_argument("--twse-price-url", default=TWSE_PRICE_URL)
+    price_parser.add_argument("--tpex-price-url", default=TPEX_PRICE_URL)
+    price_parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
+        help=(
+            "seconds between TPEx code/month requests "
+            f"(default: {DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS})"
+        ),
+    )
+    price_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})",
+    )
+    price_parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help=f"HTTP attempts per provider (default: {DEFAULT_MAX_ATTEMPTS})",
+    )
+    price_parser.add_argument(
+        "--backoff-seconds",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF_SECONDS,
+        help=f"Initial retry backoff (default: {DEFAULT_RETRY_BACKOFF_SECONDS})",
+    )
+    price_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="logging level (default: INFO)",
+    )
+
+    price_history_parser = subparsers.add_parser(
+        "price-history-sync",
+        help="synchronize a calendar-date range of daily prices",
+    )
+    price_history_parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite path (default: {DEFAULT_DATABASE_PATH})",
+    )
+    price_history_parser.add_argument(
+        "--start-date",
+        type=_parse_iso_date,
+        default=None,
+        help=(
+            "inclusive start date in YYYY-MM-DD; defaults to the beginning "
+            f"of the latest {DEFAULT_MARGIN_HISTORY_DAYS}-day window"
+        ),
+    )
+    price_history_parser.add_argument(
+        "--end-date",
+        type=_parse_iso_date,
+        default=None,
+        help="inclusive end date in YYYY-MM-DD; defaults to today",
+    )
+    price_history_parser.add_argument("--twse-price-url", default=TWSE_PRICE_URL)
+    price_history_parser.add_argument("--tpex-price-url", default=TPEX_PRICE_URL)
+    price_history_parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
+        help=(
+            "seconds between date and TPEx code/month requests "
+            f"(default: {DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS})"
+        ),
+    )
+    price_history_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})",
+    )
+    price_history_parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help=f"HTTP attempts per provider (default: {DEFAULT_MAX_ATTEMPTS})",
+    )
+    price_history_parser.add_argument(
+        "--backoff-seconds",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF_SECONDS,
+        help=f"Initial retry backoff (default: {DEFAULT_RETRY_BACKOFF_SECONDS})",
+    )
+    price_history_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="logging level (default: INFO)",
+    )
+
+    estimate_parser = subparsers.add_parser(
+        "margin-estimate",
+        help="estimate margin average cost and maintenance ratio",
+    )
+    estimate_parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite path (default: {DEFAULT_DATABASE_PATH})",
+    )
+    target = estimate_parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--stock-code", help="estimate one stock code")
+    target.add_argument("--all", action="store_true", help="estimate all stocks")
+    estimate_parser.add_argument(
+        "--start-date",
+        type=_parse_iso_date,
+        default=None,
+        help="inclusive start date; defaults to the beginning of the latest 30-day window",
+    )
+    estimate_parser.add_argument(
+        "--end-date",
+        type=_parse_iso_date,
+        default=None,
+        help="inclusive end date; defaults to today",
+    )
+    estimate_parser.add_argument(
+        "--margin-ratio",
+        type=float,
+        default=DEFAULT_MARGIN_FINANCING_RATIO,
+        help=(
+            "financing ratio used by the estimate model "
+            f"(default: {DEFAULT_MARGIN_FINANCING_RATIO})"
+        ),
+    )
+    estimate_parser.add_argument(
+        "--model-version",
+        default=DEFAULT_MARGIN_MODEL_VERSION,
+        help=f"estimate model version (default: {DEFAULT_MARGIN_MODEL_VERSION})",
+    )
+    estimate_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="logging level (default: INFO)",
+    )
     return parser
 
 
@@ -514,6 +684,130 @@ def _run_margin_history_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _make_price_service(args: argparse.Namespace) -> PriceSyncService:
+    client = JsonHttpClient(
+        timeout=args.timeout,
+        max_attempts=args.max_attempts,
+        backoff_seconds=args.backoff_seconds,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    twse_provider = TWSEPriceProvider(client, url=args.twse_price_url)
+    tpex_provider = TPExPriceProvider(
+        client,
+        url=args.tpex_price_url,
+        request_delay_seconds=args.request_delay,
+    )
+    stock_repository = StockRepository(args.db)
+    price_repository = PriceHistoryRepository(args.db)
+    return PriceSyncService(
+        twse_provider,
+        tpex_provider,
+        stock_repository,
+        price_repository,
+    )
+
+
+def _run_price_sync(args: argparse.Namespace) -> int:
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s %(message)s",
+    )
+    service = _make_price_service(args)
+    result = service.sync(args.date)
+    print("Daily Price Sync")
+    print()
+    print(f"Trade date       : {result.trade_date or 'no data'}")
+    print(f"Stocks in master : {result.stocks_count}")
+    print(f"TWSE records     : {result.twse_count}")
+    print(f"TPEx records     : {result.tpex_count}")
+    print(f"Price records    : {result.price_count}")
+    print()
+    print(f"Inserted         : {result.inserted_count}")
+    print(f"Updated          : {result.updated_count}")
+    print(f"Skipped non-stock: {result.skipped_non_master_count}")
+    print(f"Skipped totals   : {result.skipped_total_count}")
+    print()
+    print(f"Database         : {args.db}")
+    if result.skipped_non_trading:
+        print("No official data for this date; nothing was written.")
+    else:
+        print("Price sync completed successfully.")
+    return 0
+
+
+def _run_price_history_sync(args: argparse.Namespace) -> int:
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s %(message)s",
+    )
+    today = date.today()
+    end_date = args.end_date or today
+    start_date = args.start_date or end_date - timedelta(
+        days=DEFAULT_MARGIN_HISTORY_DAYS - 1
+    )
+    service = _make_price_service(args)
+    history_service = PriceHistorySyncService(
+        service,
+        request_delay_seconds=args.request_delay,
+    )
+    result = history_service.sync(start_date, end_date)
+    print("Daily Price History Sync")
+    print()
+    print(f"Date range       : {result.start_date} .. {result.end_date}")
+    print(f"Attempted days   : {result.attempted_days}")
+    print(f"Synced dates     : {result.synced_count}")
+    print(f"Skipped holidays : {result.skipped_non_trading_days}")
+    print(f"Price records    : {result.price_count}")
+    print()
+    print(f"Inserted         : {result.inserted_count}")
+    print(f"Updated          : {result.updated_count}")
+    print(f"Database         : {args.db}")
+    print("Price history sync completed successfully.")
+    return 0
+
+
+def _run_margin_estimate(args: argparse.Namespace) -> int:
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s %(message)s",
+    )
+    today = date.today()
+    end_date = args.end_date or today
+    start_date = args.start_date or end_date - timedelta(days=29)
+    margin_repository = MarginHistoryRepository(args.db)
+    price_repository = PriceHistoryRepository(args.db)
+    estimate_repository = MarginEstimateRepository(args.db)
+    estimator = MarginCostEstimator(
+        margin_repository,
+        price_repository,
+        estimate_repository,
+        margin_financing_ratio=args.margin_ratio,
+        model_version=args.model_version,
+    )
+    if args.all:
+        estimates = estimator.estimate_all(start_date, end_date)
+        target = "all stocks"
+    else:
+        estimates = estimator.estimate_range(
+            args.stock_code,
+            start_date,
+            end_date,
+        )
+        target = args.stock_code
+    print("Margin Cost and Maintenance Estimate")
+    print()
+    print(f"Target           : {target}")
+    print(f"Date range       : {start_date} .. {end_date}")
+    print(f"Model version    : {args.model_version}")
+    print(f"Margin ratio     : {args.margin_ratio}")
+    print(f"Estimate records : {len(estimates)}")
+    print(f"Skipped no close : {len(estimator.last_skipped_close_records)}")
+    print(f"Skipped no price : {len(estimator.last_skipped_price_records)}")
+    print(f"Database         : {args.db}")
+    print("Margin estimate completed successfully.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
 
@@ -529,6 +823,9 @@ def main(argv: list[str] | None = None) -> int:
         "tdcc-history-sync",
         "margin-sync",
         "margin-history-sync",
+        "price-sync",
+        "price-history-sync",
+        "margin-estimate",
     }:
         try:
             if args.command == "sync":
@@ -539,7 +836,13 @@ def main(argv: list[str] | None = None) -> int:
                 return _run_tdcc_history_sync(args)
             if args.command == "margin-sync":
                 return _run_margin_sync(args)
-            return _run_margin_history_sync(args)
+            if args.command == "margin-history-sync":
+                return _run_margin_history_sync(args)
+            if args.command == "price-sync":
+                return _run_price_sync(args)
+            if args.command == "price-history-sync":
+                return _run_price_history_sync(args)
+            return _run_margin_estimate(args)
         except StockMasterError as exc:
             logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")
             logger.error("%s", exc)
