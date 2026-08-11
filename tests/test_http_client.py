@@ -1,4 +1,5 @@
 import json
+from urllib.error import HTTPError
 
 from stock_master.providers.http import JsonHttpClient, TextHttpClient
 
@@ -73,3 +74,30 @@ def test_text_http_client_sets_headers_and_encodes_form():
         b"stockNo=2330&scaDate=20260731",
         b"scaDate=20260731&stockNo=2330",
     }
+
+
+def test_json_http_client_retries_temporary_redirect():
+    calls = []
+    sleeps = []
+
+    def opener(request, timeout):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise HTTPError(
+                request.full_url,
+                307,
+                "Temporary Redirect",
+                hdrs={},
+                fp=None,
+            )
+        return FakeResponse({"stat": "ok"})
+
+    client = JsonHttpClient(
+        max_attempts=2,
+        opener=opener,
+        sleep=sleeps.append,
+    )
+
+    assert client.get_json("https://example.test/data") == {"stat": "ok"}
+    assert len(calls) == 2
+    assert sleeps == [1.0]

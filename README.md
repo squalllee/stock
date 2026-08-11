@@ -63,6 +63,46 @@ TDCC 資料會保留歷史日期，唯一鍵為 `data_date + stock_code + holdin
 此功能會依 TDCC 歷史頁實際提供的每週日期選項決定資料日期，不會自行猜測週末或
 假日。查詢頁回傳的「差異數調整」與「合計」列不會寫入資料庫；既有資料不會被刪除。
 
+## 融資融券歷史資料
+
+在 stock master 建立後同步最新交易日的 TWSE／TPEx 融資融券 raw data：
+
+    python -m stock_master margin-sync
+
+同步指定交易日：
+
+    python -m stock_master margin-sync \
+      --db /tmp/taiwan-stocks.db \
+      --date 2026-08-07
+
+同步日期區間（日期包含起訖日）：
+
+    python -m stock_master margin-history-sync \
+      --db /tmp/taiwan-stocks.db \
+      --start-date 2026-01-01 \
+      --end-date 2026-08-11
+
+未提供日期區間時，`margin-history-sync` 預設同步截至今天的最近 30 個日曆日。
+系統會逐日查詢官方資料；週末或假日的明確 no-data 回應會略過，HTTP 失敗或
+schema 改變則停止，之前已成功寫入的日期會保留。每個交易日各自使用一個 SQLite
+transaction，重新執行只會 UPSERT，不會產生重複資料。
+
+所有數量欄位統一使用交易單位（張），且只保留 `stocks` table 中的普通股票；ETF、
+債券等官方回傳但不在股票主檔的代碼會被忽略。`margin_history` 只保存官方 raw
+data，不包含融資成本、維持率或斷頭價等估算欄位。
+
+查詢某股票最近的融資融券資料：
+
+    sqlite3 data/stocks.db \
+      "SELECT trade_date, market, margin_balance, short_balance FROM margin_history WHERE stock_code = '2330' ORDER BY trade_date DESC LIMIT 30;"
+
+驗證融資融券資料沒有孤兒股票代碼：
+
+    sqlite3 data/stocks.db \
+      "SELECT COUNT(*) FROM margin_history m LEFT JOIN stocks s ON m.stock_code = s.stock_code WHERE s.stock_code IS NULL;"
+
+結果應為 0。
+
 ## 設定
 
 CLI 可覆寫：
@@ -79,6 +119,8 @@ CLI 可覆寫：
 * TPEx: https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O
 * TDCC: https://openapi.tdcc.com.tw/v1/opendata/1-5
 * TDCC historical query: https://www.tdcc.com.tw/portal/zh/smWeb/qryStock
+* TWSE margin history: https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN
+* TPEx margin history: https://www.tpex.org.tw/web/stock/margin_trading/margin_balance/margin_bal_result.php
 
 HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫時性 HTTP／網路錯誤最多嘗試三次。
 

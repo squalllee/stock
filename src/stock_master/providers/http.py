@@ -21,6 +21,8 @@ from stock_master.exceptions import StockProviderError
 
 logger = logging.getLogger(__name__)
 
+_RETRYABLE_REDIRECT_STATUS_CODES = frozenset({307, 308})
+
 
 class JsonHttpClient:
     """Fetch JSON from an HTTPS endpoint with bounded retries.
@@ -96,7 +98,11 @@ class JsonHttpClient:
                 raise
             except HTTPError as exc:
                 last_error = exc
-                if exc.code < 500 and exc.code != 429:
+                if (
+                    exc.code < 500
+                    and exc.code != 429
+                    and exc.code not in _RETRYABLE_REDIRECT_STATUS_CODES
+                ):
                     break
                 logger.warning(
                     "HTTP attempt %s/%s failed for %s: status=%s",
@@ -232,7 +238,11 @@ class TextHttpClient:
                 raise
             except HTTPError as exc:
                 last_error = exc
-                if exc.code < 500 and exc.code != 429:
+                if (
+                    exc.code < 500
+                    and exc.code != 429
+                    and exc.code not in _RETRYABLE_REDIRECT_STATUS_CODES
+                ):
                     break
                 logger.warning(
                     "HTTP attempt %s/%s failed for %s: status=%s",
