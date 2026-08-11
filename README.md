@@ -12,6 +12,9 @@ Taiwan Stock Master 會從臺灣證券交易所（TWSE）與證券櫃檯買賣�
 
 ETF、ETN、權證、債券、基金、REIT、存託憑證、興櫃與戰略新板不會寫入 stocks。
 
+TDCC 股權分散資料會以 `stocks` table 作為唯一股票 universe；TDCC 回傳的
+ETF、其他有價證券與「合計」列都不會寫入 `tdcc_distributions`。
+
 ## 安裝
 
 需要 Python 3.11 以上。執行：
@@ -30,6 +33,36 @@ ETF、ETN、權證、債券、基金、REIT、存託憑證、興櫃與戰略新�
 
 同步會先完整取得兩個官方來源，再以單一 SQLite transaction 執行 UPSERT。任何一個來源 HTTP 失敗、回傳空陣列、schema 無法辨識，或資料量低於 sanity threshold，都會停止寫入；既有資料不會被刪除。V1 也不會因上游清單消失而自動刪除股票。
 
+在 stock master 建立後同步 TDCC 集保戶股權分散表：
+
+    python -m stock_master tdcc-sync
+
+也可以指定資料庫與 TDCC endpoint：
+
+    python -m stock_master tdcc-sync \
+      --db /tmp/taiwan-stocks.db \
+      --tdcc-url https://openapi.tdcc.com.tw/v1/opendata/1-5
+
+TDCC 資料會保留歷史日期，唯一鍵為 `data_date + stock_code + holding_level`，
+並以單一 transaction 執行 UPSERT。TDCC API 失敗、回傳空陣列或 schema 改變時會
+停止同步，不會刪除既有歷史資料。
+
+同步最近 30 個日曆日內可取得的每週 TDCC 歷史資料：
+
+    python -m stock_master tdcc-month-sync
+
+`tdcc-history-sync` 是同一功能的別名。歷史頁只能逐檔查詢，因此預設使用 2 個
+獨立 session 並在每次查詢間等待 0.2 秒；可依網路或 TDCC 限流狀況調整：
+
+    python -m stock_master tdcc-month-sync \
+      --db /tmp/taiwan-stocks.db \
+      --days 30 \
+      --workers 2 \
+      --request-delay 0.2
+
+此功能會依 TDCC 歷史頁實際提供的每週日期選項決定資料日期，不會自行猜測週末或
+假日。查詢頁回傳的「差異數調整」與「合計」列不會寫入資料庫；既有資料不會被刪除。
+
 ## 設定
 
 CLI 可覆寫：
@@ -44,6 +77,8 @@ CLI 可覆寫：
 
 * TWSE: https://openapi.twse.com.tw/v1/opendata/t187ap03_L
 * TPEx: https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O
+* TDCC: https://openapi.tdcc.com.tw/v1/opendata/1-5
+* TDCC historical query: https://www.tdcc.com.tw/portal/zh/smWeb/qryStock
 
 HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫時性 HTTP／網路錯誤最多嘗試三次。
 
@@ -58,6 +93,26 @@ HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫�
       "SELECT COUNT(*) FROM stocks WHERE stock_code IN ('0050', '0056', '00878', '00919');"
 
 結果應為 0。
+
+查詢某股票最新的股權分散資料：
+
+    sqlite3 data/stocks.db \
+      "SELECT data_date, holding_level, shareholder_count, share_count, holding_ratio FROM tdcc_distributions WHERE stock_code = '2330' ORDER BY data_date DESC, holding_level;"
+
+查詢某股票最近一個月的資料日期：
+
+    sqlite3 data/stocks.db \
+      "SELECT DISTINCT data_date FROM tdcc_distributions WHERE stock_code = '2330' AND data_date >= date('now', '-30 day') ORDER BY data_date;"
+
+驗證 TDCC 資料只屬於 stock master 且沒有「合計」列：
+
+    sqlite3 data/stocks.db \
+      "SELECT COUNT(*) FROM tdcc_distributions d LEFT JOIN stocks s ON d.stock_code = s.stock_code WHERE s.stock_code IS NULL;"
+
+    sqlite3 data/stocks.db \
+      "SELECT COUNT(*) FROM tdcc_distributions WHERE holding_level = '合計';"
+
+兩個結果都應為 0。
 
 ## 測試
 
@@ -75,4 +130,3 @@ HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫�
     ├── providers/
     ├── repositories/
     └── services/
-
