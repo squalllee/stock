@@ -1,2 +1,3 @@
-# Taiwan Stock Master has no third-party runtime dependencies.
-
+fastapi>=0.116
+uvicorn>=0.35
+jinja2>=3.1

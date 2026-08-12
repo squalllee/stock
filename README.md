@@ -21,7 +21,8 @@ ETF、其他有價證券與「合計」列都不會寫入 `tdcc_distributions`�
 
     python -m pip install -e ".[dev]"
 
-執行環境沒有第三方 runtime dependency；HTTP、JSON、SQLite 與 CLI 都使用 Python 標準函式庫。
+同步核心使用 Python 標準函式庫；Web 查詢平台額外使用 FastAPI、Uvicorn 與
+Jinja2，測試工具使用 pytest 與 httpx。
 
 ## 同步
 
@@ -185,6 +186,40 @@ TWSE 的歷史介面是全市場查詢；TPEx 歷史介面是逐股票、逐月�
 * TWSE 每日收盤歷史資料：<https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX>
 * TPEx 個股日成交資訊頁：<https://www.tpex.org.tw/zh-tw/mainboard/trading/info/stock-pricing.html>
 * TPEx OpenAPI 文件：<https://www.tpex.org.tw/openapi/>
+
+## Web 查詢平台
+
+先完成至少一次 stock master 同步，再啟動唯讀 Web 服務：
+
+    python -m stock_master web
+
+預設監聽 `127.0.0.1:8000`，瀏覽 <http://127.0.0.1:8000>。可指定主機、埠號與資料庫：
+
+    python -m stock_master web \
+      --host 127.0.0.1 \
+      --port 8000 \
+      --db /tmp/taiwan-stocks.db
+
+Web 層只透過短生命週期的 SQLite read-only connection 查詢既有資料，不會呼叫
+TWSE、TPEx 或 TDCC endpoint，也不會在瀏覽頁面時執行同步或寫入資料庫。API 以
+`/api/v1` 為前綴，主要端點如下：
+
+* `GET /api/v1/health`
+* `GET /api/v1/stocks?q=2330&limit=20&offset=0`
+* `GET /api/v1/stocks/2330`
+* `GET /api/v1/stocks/2330/overview`
+* `GET /api/v1/stocks/2330/prices?from=2026-01-01&to=2026-08-11`
+* `GET /api/v1/stocks/2330/margin`
+* `GET /api/v1/stocks/2330/margin-estimates`
+* `GET /api/v1/stocks/2330/margin-estimates/latest`
+* `GET /api/v1/stocks/2330/tdcc`
+* `GET /api/v1/stocks/2330/tdcc/latest`
+
+歷史端點支援 `from`、`to`、`limit` 與 `offset`；日期為 ISO `YYYY-MM-DD`，
+`limit` 最大為 1,000。錯誤統一回傳 `{"error": {"code": "...", "message": "..."}}`。
+行情頁的「市場成交均價」明確使用 `成交金額 ÷ 成交股數`，不是融資買進均價。
+維持率區塊的所有數值都標示為「估算」，僅供研究與風險提示，不代表券商實際維持率、
+追繳線或個人帳戶數值。
 
 ## 設定
 

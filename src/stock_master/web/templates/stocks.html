@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}股票查詢｜Taiwan Stock Data{% endblock %}
+{% block content %}
+<section class="page-intro">
+  <div class="container">
+    <p class="eyebrow">STOCK DIRECTORY</p>
+    <h1>股票查詢</h1>
+    <p>依代碼、名稱或市場篩選可用資料。</p>
+    <form class="directory-search" action="/stocks" method="get">
+      <label class="sr-only" for="directory-q">股票代碼或名稱</label>
+      <input id="directory-q" name="q" value="{{ query }}" placeholder="例如 2330 或 台積電">
+      <label class="sr-only" for="directory-market">市場</label>
+      <select id="directory-market" name="market">
+        <option value="">全部市場</option>
+        <option value="TWSE"{% if market == 'TWSE' %} selected{% endif %}>TWSE 上市</option>
+        <option value="TPEX"{% if market == 'TPEX' %} selected{% endif %}>TPEX 上櫃</option>
+      </select>
+      <button type="submit">搜尋</button>
+    </form>
+  </div>
+</section>
+<section class="container section-block">
+  <div class="results-caption"><span>找到 {{ stocks|length }} 筆結果</span><span class="muted">最多顯示 100 筆</span></div>
+  <div class="table-shell">
+    <table class="data-table">
+      <thead><tr><th>代碼</th><th>名稱</th><th>市場</th><th></th></tr></thead>
+      <tbody>
+      {% for stock in stocks %}
+      <tr><td><a class="table-code" href="/stocks/{{ stock.stock_code }}">{{ stock.stock_code }}</a></td><td>{{ stock.stock_name }}</td><td><span class="market-pill {{ stock.market|lower }}">{{ stock.market }}</span></td><td class="table-action"><a href="/stocks/{{ stock.stock_code }}">查看資料 →</a></td></tr>
+      {% else %}
+      <tr><td colspan="4"><div class="empty-state">沒有符合條件的股票。</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+

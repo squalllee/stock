@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}台股資料查詢｜Taiwan Stock Data{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow">TAIWAN MARKET DATA</p>
+      <h1>把市場資料，<br><em>放在同一張圖上。</em></h1>
+      <p class="hero-lede">查詢台股每日成交、融資融券、融資成本估算，以及 TDCC 股權分散資料。</p>
+      <form class="search-box" action="/stocks" method="get" data-search-form>
+        <label class="sr-only" for="home-search">搜尋股票代碼或名稱</label>
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="home-search" name="q" type="search" placeholder="輸入股票代碼或名稱，例如 2330、台積電" autocomplete="off" data-stock-search>
+        <button type="submit">開始查詢</button>
+        <div class="search-suggestions" data-search-suggestions hidden></div>
+      </form>
+    </div>
+    <div class="hero-orbit" aria-hidden="true">
+      <div class="orbit orbit-one"></div>
+      <div class="orbit orbit-two"></div>
+      <div class="orbit-core"><span>TW</span><small>MARKET</small></div>
+      <span class="orbit-dot dot-one"></span><span class="orbit-dot dot-two"></span><span class="orbit-dot dot-three"></span>
+    </div>
+  </div>
+</section>
+
+<section class="container section-block">
+  <div class="section-heading">
+    <div><p class="eyebrow">AT A GLANCE</p><h2>資料概覽</h2></div>
+    <a class="text-link" href="/about">瞭解資料定義 →</a>
+  </div>
+  <div class="metric-grid">
+    <article class="metric-card accent-card"><span class="metric-label">股票總數</span><strong>{{ '{:,}'.format(summary.stock_count) }}</strong><span class="metric-note">TWSE {{ '{:,}'.format(summary.twse_count) }} · TPEX {{ '{:,}'.format(summary.tpex_count) }}</span></article>
+    <article class="metric-card"><span class="metric-label">行情最新日期</span><strong>{{ summary.latest_price_date or '—' }}</strong><span class="metric-note">每日成交資料</span></article>
+    <article class="metric-card"><span class="metric-label">融資最新日期</span><strong>{{ summary.latest_margin_date or '—' }}</strong><span class="metric-note">融資融券餘額</span></article>
+    <article class="metric-card"><span class="metric-label">TDCC 最新日期</span><strong>{{ summary.latest_tdcc_date or '—' }}</strong><span class="metric-note">每週股權分散</span></article>
+  </div>
+</section>
+
+<section class="container section-block compact-block">
+  <div class="section-heading"><div><p class="eyebrow">QUICK ACCESS</p><h2>熱門股票</h2></div><a class="text-link" href="/stocks">查看全部 →</a></div>
+  <div class="stock-list-grid">
+    {% for stock in stocks %}
+    <a class="stock-teaser" href="/stocks/{{ stock.stock_code }}">
+      <span class="stock-code">{{ stock.stock_code }}</span><span class="stock-name">{{ stock.stock_name }}</span><span class="stock-market">{{ stock.market }}</span><span class="arrow">↗</span>
+    </a>
+    {% else %}
+    <div class="empty-state">目前沒有可顯示的股票主檔。</div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+

@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}資料暫時無法使用｜Taiwan Stock Data{% endblock %}
+{% block content %}
+<section class="container error-page"><span class="error-mark">!</span><p class="eyebrow">{{ error.code }}</p><h1>這個資料區塊目前無法顯示</h1><p>{{ error.message }}</p><a class="button-link" href="/">回到首頁</a></section>
+{% endblock %}
+

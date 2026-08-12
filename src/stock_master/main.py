@@ -490,6 +490,34 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="logging level (default: INFO)",
     )
+
+    web_parser = subparsers.add_parser(
+        "web",
+        help="start the read-only Taiwan stock Web query platform",
+    )
+    web_parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite path (default: {DEFAULT_DATABASE_PATH})",
+    )
+    web_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind host (default: 127.0.0.1)",
+    )
+    web_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="bind port (default: 8000)",
+    )
+    web_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="logging level (default: INFO)",
+    )
     return parser
 
 
@@ -809,6 +837,26 @@ def _run_margin_estimate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_web(args: argparse.Namespace) -> int:
+    """Start the read-only Web server without importing providers or sync code."""
+
+    import uvicorn
+
+    from stock_master.web import create_app
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s %(message)s",
+    )
+    uvicorn.run(
+        create_app(args.db),
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
 
@@ -827,6 +875,7 @@ def main(argv: list[str] | None = None) -> int:
         "price-sync",
         "price-history-sync",
         "margin-estimate",
+        "web",
     }:
         try:
             if args.command == "sync":
@@ -843,6 +892,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _run_price_sync(args)
             if args.command == "price-history-sync":
                 return _run_price_history_sync(args)
+            if args.command == "web":
+                return _run_web(args)
             return _run_margin_estimate(args)
         except StockMasterError as exc:
             logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")

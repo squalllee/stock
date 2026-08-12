@@ -7,11 +7,16 @@ name = "taiwan-stock-master"
 version = "0.1.0"
 description = "Synchronize Taiwan listed and OTC common stocks into SQLite"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "fastapi>=0.116",
+    "uvicorn>=0.35",
+    "jinja2>=3.1",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "httpx>=0.28",
 ]
 
 [project.scripts]
@@ -20,7 +25,9 @@ stock-master = "stock_master.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+stock_master = ["web/templates/*.html", "web/static/css/*.css", "web/static/js/*.js"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-

@@ -11,6 +11,8 @@ from pathlib import Path
 from stock_master.exceptions import DatabaseError
 from stock_master.models import Stock
 
+from .connection import connect_sqlite
+
 _STOCK_CODE_PATTERN = re.compile(r"^\d{4}$")
 _VALID_MARKETS = frozenset({"TWSE", "TPEX"})
 
@@ -49,15 +51,15 @@ class RepositorySyncStats:
 class StockRepository:
     """Repository that never deletes rows during a V1 sync."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, readonly: bool = False) -> None:
         self.db_path = Path(db_path)
+        self.readonly = readonly
 
     def _connect(self) -> sqlite3.Connection:
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(self.db_path)
-            connection.row_factory = sqlite3.Row
-            return connection
+            return connect_sqlite(self.db_path, readonly=self.readonly)
+        except DatabaseError:
+            raise
         except (OSError, sqlite3.Error) as exc:
             raise DatabaseError(
                 f"Could not open SQLite database {self.db_path}: {exc}"
@@ -194,6 +196,82 @@ class StockRepository:
         except sqlite3.Error as exc:
             raise DatabaseError(
                 f"Could not read stock {stock_code} from {self.db_path}: {exc}"
+            ) from exc
+        finally:
+            connection.close()
+
+    def search(
+        self,
+        query: str = "",
+        *,
+        market: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[Stock]:
+        """Search codes/names with bounded, parameterized SQL."""
+
+        if limit < 1:
+            raise DatabaseError("limit must be at least 1.")
+        if offset < 0:
+            raise DatabaseError("offset must be non-negative.")
+        normalized = query.strip()
+        connection = self._connect()
+        try:
+            clauses: list[str] = []
+            parameters: list[object] = []
+            if normalized:
+                pattern = f"%{normalized}%"
+                clauses.append("(stock_code LIKE ? OR stock_name LIKE ?)")
+                parameters.extend((pattern, pattern))
+            if market is not None:
+                if market not in _VALID_MARKETS:
+                    raise DatabaseError("market must be TWSE or TPEX.")
+                clauses.append("market = ?")
+                parameters.append(market)
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            if normalized:
+                order = (
+                    " ORDER BY CASE WHEN stock_code = ? THEN 0 "
+                    "WHEN stock_code LIKE ? THEN 1 "
+                    "WHEN stock_name = ? THEN 2 ELSE 3 END, stock_code"
+                )
+                parameters.extend((normalized, f"{normalized}%", normalized))
+            else:
+                order = " ORDER BY stock_code"
+            rows = connection.execute(
+                "SELECT stock_code, stock_name, market FROM stocks"
+                f"{where}{order} LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            )
+            return [
+                Stock(
+                    stock_code=row["stock_code"],
+                    stock_name=row["stock_name"],
+                    market=row["market"],
+                )
+                for row in rows
+            ]
+        except DatabaseError:
+            raise
+        except sqlite3.Error as exc:
+            raise DatabaseError(
+                f"Could not search stocks in SQLite database {self.db_path}: {exc}"
+            ) from exc
+        finally:
+            connection.close()
+
+    def get_market_counts(self) -> dict[str, int]:
+        """Return stock counts by market for the dashboard."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT market, COUNT(*) AS count FROM stocks GROUP BY market"
+            )
+            return {row["market"]: row["count"] for row in rows}
+        except sqlite3.Error as exc:
+            raise DatabaseError(
+                f"Could not read stock counts from SQLite database {self.db_path}: {exc}"
             ) from exc
         finally:
             connection.close()

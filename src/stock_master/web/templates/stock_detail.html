@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ stock.stock_code }} {{ stock.stock_name }}｜Taiwan Stock Data{% endblock %}
+{% block content %}
+<div class="stock-page" data-stock-code="{{ stock.stock_code }}">
+  <section class="stock-hero">
+    <div class="container stock-heading">
+      <div><a class="back-link" href="/stocks">← 返回股票查詢</a><div class="stock-title-row"><span class="large-code">{{ stock.stock_code }}</span><span class="market-pill {{ stock.market|lower }}">{{ stock.market }}</span></div><h1>{{ stock.stock_name }}</h1></div>
+      <div class="latest-badge"><span class="status-dot"></span><span>資料由本地資料庫提供</span></div>
+    </div>
+  </section>
+
+  <section class="container section-block detail-section" data-section="overview">
+    <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2>最新概況</h2></div><span class="muted" data-overview-date></span></div>
+    <div class="metric-grid detail-metrics" data-overview-metrics><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card"></div></div>
+  </section>
+
+  <section class="container section-block detail-section" data-section="prices">
+    <div class="section-heading"><div><p class="eyebrow">PRICE HISTORY</p><h2>每日成交行情</h2></div><div class="section-tools"><div class="range-tabs" data-range-tabs><button type="button" data-range-days="30">1M</button><button type="button" data-range-days="90" class="active">3M</button><button type="button" data-range-days="180">6M</button><button type="button" data-range-days="365">1Y</button><button type="button" data-range-days="all">ALL</button></div><span class="section-note">歷史範圍</span></div></div>
+    <div class="chart-card"><div class="chart-head"><div><span class="chart-title">收盤價</span><span class="chart-subtitle" data-price-summary>載入中…</span></div><span class="legend-chip price-chip">CLOSE</span></div><div class="chart-wrap"><canvas id="price-chart" aria-label="收盤價歷史圖"></canvas></div><div class="fact-grid" data-price-facts><span class="muted">載入最新行情…</span></div><p class="chart-footnote">市場成交均價 = 成交金額 ÷ 成交股數；這不是融資買進均價。</p></div>
+    <div class="table-shell mini-table-shell" data-price-table></div>
+  </section>
+
+  <section class="container section-block detail-section" data-section="margin">
+    <div class="section-heading"><div><p class="eyebrow">MARGIN & SHORT</p><h2>融資融券</h2></div><span class="section-note">餘額與增減</span></div>
+    <div class="chart-card"><div class="chart-head"><div><span class="chart-title">融資／融券餘額</span><span class="chart-subtitle" data-margin-summary>載入中…</span></div><span class="legend-chip margin-chip">BALANCE</span></div><div class="chart-wrap"><canvas id="margin-chart" aria-label="融資融券餘額歷史圖"></canvas></div><div class="fact-grid margin-facts" data-margin-facts><span class="muted">載入最新融資資料…</span></div></div>
+    <div class="table-shell mini-table-shell" data-margin-table></div>
+  </section>
+
+  <section class="container section-block detail-section" data-section="estimates">
+    <div class="section-heading"><div><p class="eyebrow">MODEL OUTPUT</p><h2>融資維持率估算</h2></div><span class="estimate-label">估算 · wma-v1</span></div>
+    <div class="estimate-grid" data-estimate-cards><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card"></div></div>
+    <p class="disclaimer-line">此區塊是以公開資料推算的風險提示，不代表券商實際維持率或個人帳戶數值。</p>
+  </section>
+
+  <section class="container section-block detail-section" data-section="tdcc">
+    <div class="section-heading"><div><p class="eyebrow">OWNERSHIP DISTRIBUTION</p><h2>TDCC 股權分散</h2></div><span class="section-note" data-tdcc-date>每週資料</span></div>
+    <div class="tdcc-layout"><div class="chart-card"><div class="chart-head"><div><span class="chart-title">最新持股級距</span><span class="chart-subtitle">股東人數與持股比例</span></div><span class="legend-chip tdcc-chip">TDCC</span></div><div class="chart-wrap short-chart"><canvas id="tdcc-chart" aria-label="TDCC 持股分散圖"></canvas></div></div><div class="table-shell mini-table-shell" data-tdcc-table></div></div>
+  </section>
+</div>
+{% endblock %}

@@ -11,6 +11,8 @@ from pathlib import Path
 from stock_master.exceptions import DatabaseError
 from stock_master.models import MarginHistory
 
+from .connection import connect_sqlite
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS margin_history (
     trade_date TEXT NOT NULL,
@@ -89,16 +91,17 @@ _VALID_MARKETS = frozenset({"TWSE", "TPEX"})
 class MarginHistoryRepository:
     """Persist official margin facts without deleting historical rows."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, readonly: bool = False) -> None:
         self.db_path = Path(db_path)
+        self.readonly = readonly
 
     def _connect(self) -> sqlite3.Connection:
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(self.db_path)
-            connection.row_factory = sqlite3.Row
+            connection = connect_sqlite(self.db_path, readonly=self.readonly)
             connection.execute("PRAGMA foreign_keys = ON")
             return connection
+        except DatabaseError:
+            raise
         except (OSError, sqlite3.Error) as exc:
             raise DatabaseError(
                 f"Could not open SQLite database {self.db_path}: {exc}"
@@ -221,6 +224,9 @@ class MarginHistoryRepository:
         start_date: str,
         end_date: str,
         stock_code: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[MarginHistory]:
         """Return records in an inclusive date range, optionally by stock."""
 
@@ -228,17 +234,16 @@ class MarginHistoryRepository:
         self._validate_date(end_date, "end_date")
         if start_date > end_date:
             raise DatabaseError("start_date must not be after end_date.")
-        if stock_code is None:
-            return self._get_many(
-                "WHERE trade_date BETWEEN ? AND ? "
-                "ORDER BY trade_date, stock_code",
-                (start_date, end_date),
-            )
-        return self._get_many(
-            "WHERE stock_code = ? AND trade_date BETWEEN ? AND ? "
-            "ORDER BY trade_date",
-            (stock_code, start_date, end_date),
-        )
+        clause = "WHERE trade_date BETWEEN ? AND ?"
+        parameters: tuple[object, ...] = (start_date, end_date)
+        order = " ORDER BY trade_date, stock_code"
+        if stock_code is not None:
+            clause = "WHERE stock_code = ? AND trade_date BETWEEN ? AND ?"
+            parameters = (stock_code, start_date, end_date)
+            order = " ORDER BY trade_date"
+        clause += order
+        clause, parameters = _add_pagination(clause, parameters, limit, offset)
+        return self._get_many(clause, parameters)
 
     def get_latest_by_stock_code(self, stock_code: str) -> MarginHistory | None:
         """Return the latest record for one stock, if present."""
@@ -281,6 +286,19 @@ class MarginHistoryRepository:
             ) from exc
         finally:
             connection.close()
+
+    def get_recent_by_stock_code(
+        self, stock_code: str, limit: int = 90
+    ) -> list[MarginHistory]:
+        """Return the latest rows for a stock in ascending date order."""
+
+        if limit < 1:
+            raise DatabaseError("limit must be at least 1.")
+        values = self._get_many(
+            "WHERE stock_code = ? ORDER BY trade_date DESC LIMIT ?",
+            (stock_code, limit),
+        )
+        return list(reversed(values))
 
     def _get_many(
         self, condition: str, parameters: tuple[object, ...]
@@ -373,6 +391,23 @@ class MarginHistoryRepository:
             raise DatabaseError(
                 f"Invalid margin {field} {value!r}; expected YYYY-MM-DD."
             ) from exc
+
+
+def _add_pagination(
+    clause: str,
+    parameters: tuple[object, ...],
+    limit: int | None,
+    offset: int,
+) -> tuple[str, tuple[object, ...]]:
+    if offset < 0:
+        raise DatabaseError("offset must be non-negative.")
+    if limit is not None and limit < 1:
+        raise DatabaseError("limit must be at least 1.")
+    if limit is None:
+        if offset:
+            return clause + " LIMIT -1 OFFSET ?", parameters + (offset,)
+        return clause, parameters
+    return clause + " LIMIT ? OFFSET ?", parameters + (limit, offset)
 
 
 @dataclass(frozen=True, slots=True)
