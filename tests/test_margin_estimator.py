@@ -168,3 +168,43 @@ def test_missing_price_skips_unchanged_position_row(tmp_path, caplog):
     assert results[-1].estimated_margin_avg_cost == pytest.approx(106.6666667)
     assert estimator.last_skipped_price_records == [("2330", "2026-08-08")]
     assert "Missing price_history" in caplog.text
+
+
+def test_first_active_snapshot_without_volume_uses_close_for_bootstrap(tmp_path, caplog):
+    margins, prices = make_repositories(tmp_path)
+    margins.upsert(
+        margin("2026-08-10", previous=42, balance=42, buy=0)
+    )
+    prices.upsert(
+        PriceHistory(
+            trade_date="2026-08-10",
+            stock_code="2330",
+            market="TWSE",
+            trade_volume=0,
+            trade_value=0,
+            close_price=100.0,
+        )
+    )
+    estimator = MarginCostEstimator(margins, prices)
+
+    with caplog.at_level(logging.WARNING):
+        results = estimator.estimate_range("2330", "2026-08-10", "2026-08-10")
+
+    assert results[0].estimated_margin_avg_cost == pytest.approx(100.0)
+    assert "bootstrap fallback" in caplog.text
+
+
+def test_first_active_snapshot_without_price_is_skipped(tmp_path, caplog):
+    margins, prices = make_repositories(tmp_path)
+    margins.upsert(
+        margin("2026-08-10", previous=42, balance=42, buy=0)
+    )
+    prices.create_tables()
+    estimator = MarginCostEstimator(margins, prices)
+
+    with caplog.at_level(logging.WARNING):
+        results = estimator.estimate_range("2330", "2026-08-10", "2026-08-10")
+
+    assert results == []
+    assert estimator.last_skipped_price_records == [("2330", "2026-08-10")]
+    assert "Missing price_history" in caplog.text

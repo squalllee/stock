@@ -803,6 +803,7 @@ def _run_margin_estimate(args: argparse.Namespace) -> int:
     print(f"Estimate records : {len(estimates)}")
     print(f"Skipped no close : {len(estimator.last_skipped_close_records)}")
     print(f"Skipped no price : {len(estimator.last_skipped_price_records)}")
+    print(f"Skipped no cost  : {len(estimator.last_skipped_cost_records)}")
     print(f"Database         : {args.db}")
     print("Margin estimate completed successfully.")
     return 0

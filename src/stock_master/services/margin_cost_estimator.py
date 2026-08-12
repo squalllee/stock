@@ -63,6 +63,7 @@ class MarginCostEstimator:
         )
         self.last_skipped_close_records: list[tuple[str, str]] = []
         self.last_skipped_price_records: list[tuple[str, str]] = []
+        self.last_skipped_cost_records: list[tuple[str, str]] = []
 
     def estimate(
         self,
@@ -110,6 +111,7 @@ class MarginCostEstimator:
         )
         self.last_skipped_close_records = []
         self.last_skipped_price_records = []
+        self.last_skipped_cost_records = []
         estimates = self._estimate_records(
             margins,
             start,
@@ -139,6 +141,7 @@ class MarginCostEstimator:
             grouped[record.stock_code].append(record)
         self.last_skipped_close_records = []
         self.last_skipped_price_records = []
+        self.last_skipped_cost_records = []
         estimates: list[MarginEstimate] = []
         for stock_code in sorted(grouped):
             estimates.extend(
@@ -167,7 +170,7 @@ class MarginCostEstimator:
             start.isoformat(), end.isoformat(), stock_code.strip()
         )
         prices = self._load_prices(stock_code.strip(), start, end)
-        costs = self._estimate_costs(margins, prices)
+        costs = self._estimate_costs(margins, prices, skip_missing_price=False)
         return [
             MarginCostEstimate(
                 trade_date=trade_date,
@@ -176,6 +179,7 @@ class MarginCostEstimator:
                 model_version=self.model_version,
             )
             for trade_date, cost in costs
+            if cost is not None
         ]
 
     def _estimate_records(
@@ -191,7 +195,11 @@ class MarginCostEstimator:
             return []
         stock_code = margins[0].stock_code
         price_by_date = self._load_prices(stock_code, start, end)
-        costs = self._estimate_costs(margins, price_by_date)
+        costs = self._estimate_costs(
+            margins,
+            price_by_date,
+            skip_missing_price=skip_missing_price,
+        )
         estimates: list[MarginEstimate] = []
         for margin, (trade_date, cost) in zip(margins, costs, strict=True):
             price = price_by_date.get(trade_date)
@@ -204,6 +212,16 @@ class MarginCostEstimator:
                     raise StockDataValidationError(message)
                 logger.warning("%s Skipping this estimate row.", message)
                 self.last_skipped_price_records.append((stock_code, trade_date))
+                continue
+            if cost is None:
+                message = (
+                    f"Estimated margin cost unavailable for {stock_code} on "
+                    f"{trade_date}; cannot estimate maintenance ratio."
+                )
+                if not skip_missing_price:
+                    raise StockDataValidationError(message)
+                logger.warning("%s Skipping this estimate row.", message)
+                self.last_skipped_cost_records.append((stock_code, trade_date))
                 continue
             if price.market != margin.market:
                 raise StockDataValidationError(
@@ -247,41 +265,15 @@ class MarginCostEstimator:
         self,
         margins: list[MarginHistory],
         prices: dict[str, PriceHistory],
-    ) -> list[tuple[str, float]]:
+        *,
+        skip_missing_price: bool,
+    ) -> list[tuple[str, float | None]]:
         if not margins:
             return []
-        costs: list[tuple[str, float]] = []
+        costs: list[tuple[str, float | None]] = []
         previous_margin: MarginHistory | None = None
-        previous_cost = 0.0
+        previous_cost: float | None = None
         for index, margin in enumerate(margins):
-            price = prices.get(margin.trade_date)
-            if price is None:
-                if margin.margin_balance <= 0:
-                    current_cost = 0.0
-                elif (
-                    index > 0
-                    and margin.margin_buy == 0
-                    and margin.margin_previous_balance > 0
-                ):
-                    # No new lots need pricing on this date, so the previous
-                    # WMA remains valid even when the stock had no price row.
-                    current_cost = previous_cost
-                else:
-                    raise StockDataValidationError(
-                        f"Missing price_history for {margin.stock_code} on "
-                        f"{margin.trade_date}; cannot price new or bootstrap "
-                        "margin lots."
-                    )
-                if not math.isfinite(current_cost) or current_cost < 0:
-                    raise StockDataValidationError(
-                        f"Invalid estimated margin cost for {margin.stock_code} on "
-                        f"{margin.trade_date}."
-                    )
-                costs.append((margin.trade_date, float(current_cost)))
-                previous_margin = margin
-                previous_cost = float(current_cost)
-                continue
-            market_average = price.market_average_price
             if previous_margin is not None:
                 if previous_margin.margin_balance != margin.margin_previous_balance:
                     logger.warning(
@@ -308,25 +300,90 @@ class MarginCostEstimator:
                         margin.margin_balance,
                     )
 
+            price = prices.get(margin.trade_date)
+            if price is None:
+                if margin.margin_balance <= 0:
+                    current_cost = 0.0
+                elif (
+                    index > 0
+                    and margin.margin_buy == 0
+                    and margin.margin_previous_balance > 0
+                    and previous_cost is not None
+                ):
+                    # No new lots need pricing on this date, so the previous
+                    # WMA remains valid even when the stock had no price row.
+                    current_cost = previous_cost
+                elif skip_missing_price:
+                    # Keep the cost unknown until a valid price can bootstrap
+                    # it.  The final maintenance row will be skipped rather
+                    # than inventing a price for this date.
+                    current_cost = None
+                else:
+                    raise StockDataValidationError(
+                        f"Missing price_history for {margin.stock_code} on "
+                        f"{margin.trade_date}; cannot price new or bootstrap "
+                        "margin lots."
+                    )
+                if current_cost is not None and (
+                    not math.isfinite(current_cost) or current_cost < 0
+                ):
+                    raise StockDataValidationError(
+                        f"Invalid estimated margin cost for {margin.stock_code} on "
+                        f"{margin.trade_date}."
+                    )
+                costs.append(
+                    (
+                        margin.trade_date,
+                        None if current_cost is None else float(current_cost),
+                    )
+                )
+                previous_margin = margin
+                previous_cost = (
+                    None if current_cost is None else float(current_cost)
+                )
+                continue
+            market_average = price.market_average_price
+
             if margin.margin_balance <= 0:
                 current_cost = 0.0
             elif index == 0:
-                current_cost = _require_market_average(
-                    market_average, margin.stock_code, margin.trade_date
-                )
-            elif margin.margin_buy > 0:
-                buy_price = _require_market_average(
-                    market_average, margin.stock_code, margin.trade_date
-                )
-                gross_quantity = margin.margin_previous_balance + margin.margin_buy
-                if gross_quantity <= 0:
-                    current_cost = buy_price
+                if margin.margin_buy > 0:
+                    if market_average is None and skip_missing_price:
+                        current_cost = None
+                    else:
+                        current_cost = _require_market_average(
+                            market_average, margin.stock_code, margin.trade_date
+                        )
                 else:
-                    gross_cost = (
-                        margin.margin_previous_balance * previous_cost
-                        + margin.margin_buy * buy_price
+                    current_cost = _bootstrap_cost(
+                        market_average,
+                        price.close_price,
+                        margin.stock_code,
+                        margin.trade_date,
+                        allow_missing=skip_missing_price,
                     )
-                    current_cost = gross_cost / gross_quantity
+            elif margin.margin_buy > 0:
+                if previous_cost is None and margin.margin_previous_balance > 0:
+                    current_cost = None
+                elif market_average is None and skip_missing_price:
+                    # New margin lots must use the market-average proxy; a
+                    # close price is not an acceptable replacement here.
+                    current_cost = None
+                else:
+                    buy_price = _require_market_average(
+                        market_average, margin.stock_code, margin.trade_date
+                    )
+                    gross_quantity = (
+                        margin.margin_previous_balance + margin.margin_buy
+                    )
+                    if gross_quantity <= 0:
+                        current_cost = buy_price
+                    else:
+                        gross_cost = (
+                            margin.margin_previous_balance * (previous_cost or 0.0)
+                            + margin.margin_buy * buy_price
+                        )
+                        current_cost = gross_cost / gross_quantity
             elif margin.margin_previous_balance > 0:
                 # A sell or cash redemption changes quantity only; it does not
                 # change the estimated average cost of the remaining lots.
@@ -334,18 +391,29 @@ class MarginCostEstimator:
             else:
                 # This is an inconsistent but recoverable official snapshot:
                 # bootstrap from the only available market proxy.
-                current_cost = _require_market_average(
-                    market_average, margin.stock_code, margin.trade_date
+                current_cost = _bootstrap_cost(
+                    market_average,
+                    price.close_price,
+                    margin.stock_code,
+                    margin.trade_date,
+                    allow_missing=skip_missing_price,
                 )
 
-            if not math.isfinite(current_cost) or current_cost < 0:
+            if current_cost is not None and (
+                not math.isfinite(current_cost) or current_cost < 0
+            ):
                 raise StockDataValidationError(
                     f"Invalid estimated margin cost for {margin.stock_code} on "
                     f"{margin.trade_date}."
                 )
-            costs.append((margin.trade_date, float(current_cost)))
+            costs.append(
+                (
+                    margin.trade_date,
+                    None if current_cost is None else float(current_cost),
+                )
+            )
             previous_margin = margin
-            previous_cost = float(current_cost)
+            previous_cost = None if current_cost is None else float(current_cost)
         return costs
 
 
@@ -360,6 +428,34 @@ def _require_market_average(
             "trade_volume is zero, so market_average_price is unavailable."
         )
     return float(market_average)
+
+
+def _bootstrap_cost(
+    market_average: float | None,
+    close_price: float | None,
+    stock_code: str,
+    trade_date: str,
+    *,
+    allow_missing: bool,
+) -> float | None:
+    """Bootstrap from market average, with close as a documented fallback."""
+
+    if market_average is not None:
+        return float(market_average)
+    if close_price is not None:
+        logger.warning(
+            "Market average unavailable for %s on %s; using close_price "
+            "as bootstrap fallback",
+            stock_code,
+            trade_date,
+        )
+        return float(close_price)
+    if allow_missing:
+        return None
+    raise StockDataValidationError(
+        f"Cannot bootstrap margin cost for {stock_code} on {trade_date}: "
+        "market_average_price and close_price are unavailable."
+    )
 
 
 def _coerce_range(
