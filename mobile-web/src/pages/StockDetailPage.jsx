@@ -160,13 +160,13 @@ function TrendChart({ history }) {
     <div className="chart-wrap" aria-label="大戶與散戶持股比例折線圖">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 12, right: 2, left: -18, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(139, 164, 184, .12)" vertical={false} />
-          <XAxis dataKey="label" stroke="#8294a5" tickLine={false} axisLine={false} minTickGap={24} fontSize={11} />
-          <YAxis stroke="#8294a5" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(value) => `${value}%`} />
+          <CartesianGrid stroke="rgba(89, 119, 119, .16)" vertical={false} />
+          <XAxis dataKey="label" stroke="#71858a" tickLine={false} axisLine={false} minTickGap={24} fontSize={11} />
+          <YAxis stroke="#71858a" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(value) => `${value}%`} />
           <Tooltip content={<ChartTooltip />} />
           <Legend iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-          <Line type="monotone" name="大戶" dataKey="large_ratio" stroke="#39d6b4" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-          <Line type="monotone" name="散戶" dataKey="retail_ratio" stroke="#ffb86a" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+          <Line type="monotone" name="大戶" dataKey="large_ratio" stroke="#078b78" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+          <Line type="monotone" name="散戶" dataKey="retail_ratio" stroke="#bd6907" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
         </LineChart>
       </ResponsiveContainer>
     </div>
