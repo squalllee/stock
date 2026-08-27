@@ -43,7 +43,7 @@ export function formatDate(value) {
 }
 
 export function formatShortDate(value) {
-  if (!value) return "—";
+  if (!value) return "無日期";
   return shortDateFormatter.format(new Date(`${value}T00:00:00`));
 }
 

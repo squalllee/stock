@@ -77,10 +77,23 @@ export default function HomePage() {
 
   return (
     <div className="page home-page">
-      <section className="hero-panel">
-        <span className="eyebrow">每週籌碼觀察</span>
-        <h1>看懂大戶與散戶<br />持股變化</h1>
-        <p>直接查詢 TDCC 最新股權分散，找出大戶連續加碼的台股。</p>
+      <section className="hero-panel" aria-labelledby="home-title">
+        <div className="hero-copy">
+          <span className="eyebrow">TDCC / 每週資料</span>
+          <h1 id="home-title">看懂大戶與散戶<br />持股變化</h1>
+          <p>直接查詢 TDCC 最新股權分散，找出大戶連續加碼的台股。</p>
+        </div>
+        <aside className="hero-brief" aria-label="資料口徑摘要">
+          <div className="hero-brief-top">
+            <span>本頁觀察</span>
+            <strong>每週更新</strong>
+          </div>
+          <dl>
+            <div><dt>大戶</dt><dd>第 15 級距</dd></div>
+            <div><dt>散戶</dt><dd>第 1～6 級距</dd></div>
+            <div><dt>查詢內容</dt><dd>比例與持股張數</dd></div>
+          </dl>
+        </aside>
       </section>
 
       <div className="view-switcher" role="tablist" aria-label="功能切換">
@@ -110,29 +123,33 @@ export default function HomePage() {
         <section className="content-section" aria-labelledby="search-title">
           <div className="section-heading">
             <div>
-              <span className="section-kicker">SEARCH</span>
               <h2 id="search-title">搜尋股票</h2>
+              <p>輸入代碼或名稱，查看最新持股結構。</p>
             </div>
-            <small>代碼或名稱</small>
+            <small className="section-meta">個股查詢</small>
           </div>
 
-          <label className="search-field">
-            <Search size={20} />
-            <input
-              ref={searchInput}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="例如：2330 或 台積電"
-              autoComplete="off"
-              inputMode="search"
-              aria-label="輸入股票代碼或股票名稱"
-            />
-            {query ? (
-              <button type="button" onClick={() => setQuery("")} aria-label="清除搜尋">
-                <X size={18} />
-              </button>
-            ) : null}
-          </label>
+          <div className="search-form">
+            <label className="field-label" htmlFor="stock-search">股票代碼或名稱</label>
+            <div className="search-field">
+              <Search size={20} aria-hidden="true" />
+              <input
+                id="stock-search"
+                ref={searchInput}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="例如：2330 或 台積電"
+                autoComplete="off"
+                inputMode="search"
+                aria-label="輸入股票代碼或股票名稱"
+              />
+              {query ? (
+                <button type="button" onClick={() => setQuery("")} aria-label="清除搜尋">
+                  <X size={18} />
+                </button>
+              ) : null}
+            </div>
+          </div>
 
           <SearchResults state={searchState} query={query.trim()} />
         </section>
@@ -140,10 +157,10 @@ export default function HomePage() {
         <section className="content-section" aria-labelledby="screen-title">
           <div className="section-heading">
             <div>
-              <span className="section-kicker">SCREENER</span>
               <h2 id="screen-title">大戶連續增持</h2>
+              <p>只保留大戶持股比例每週都高於前一週的股票。</p>
             </div>
-            <SlidersHorizontal size={20} />
+            <SlidersHorizontal className="section-icon" size={20} aria-hidden="true" />
           </div>
 
           <div className="filter-panel">
@@ -185,8 +202,8 @@ function SearchResults({ state, query }) {
     return (
       <div className="search-prompt">
         <div className="prompt-orbit"><Search size={24} /></div>
-        <strong>輸入股票代碼或名稱</strong>
-        <span>立即查看最新大戶與散戶持股比例、持股張數</span>
+        <strong>從一檔股票開始</strong>
+        <span>輸入代碼或名稱，立即查看大戶與散戶持股。</span>
       </div>
     );
   }
@@ -196,9 +213,15 @@ function SearchResults({ state, query }) {
     return <EmptyState title="找不到相符股票" description="請確認代碼或改用較短的名稱搜尋。" />;
   }
   return (
-    <div className="result-list">
-      {state.items.map((stock) => <StockCard key={stock.stock_code} stock={stock} />)}
-    </div>
+    <>
+      <div className="result-summary">
+        <div><span>搜尋結果</span><strong>{state.items.length}</strong><span>檔</span></div>
+        <small>點選查看明細</small>
+      </div>
+      <div className="result-list">
+        {state.items.map((stock) => <StockCard key={stock.stock_code} stock={stock} />)}
+      </div>
+    </>
   );
 }
 
@@ -218,9 +241,8 @@ function ScreenerResults({ state, weeks, onRetry }) {
   return (
     <>
       <div className="result-summary">
-        <span>符合條件</span>
-        <strong>{state.items.length} 檔</strong>
-        <small>依增幅排序</small>
+        <div><span>符合條件</span><strong>{state.items.length}</strong><span>檔</span></div>
+        <small>依大戶增加幅度排序</small>
       </div>
       <div className="result-list">
         {state.items.map((stock) => (

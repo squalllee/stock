@@ -1,10 +1,13 @@
-import { AlertCircle, Database, LoaderCircle } from "lucide-react";
+import { AlertCircle, Database } from "lucide-react";
 
 export function LoadingState({ label = "正在讀取資料…" }) {
   return (
-    <div className="feedback-card" role="status">
-      <LoaderCircle className="spin" size={22} />
-      <span>{label}</span>
+    <div className="feedback-card feedback-loading" role="status">
+      <span className="loading-mark" aria-hidden="true" />
+      <div>
+        <strong>{label}</strong>
+        <p>資料回來後會自動更新。</p>
+      </div>
     </div>
   );
 }

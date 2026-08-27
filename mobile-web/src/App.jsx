@@ -61,8 +61,8 @@ function AppHeader({ isDetail }) {
           <span>籌碼週報</span>
           <small>TDCC 股權分散</small>
         </AppLink>
-        <div className="live-pill">
-          <span />
+        <div className="live-pill" aria-label="Supabase 資料來源">
+          <span className="status-dot" aria-hidden="true" />
           Supabase
         </div>
       </div>

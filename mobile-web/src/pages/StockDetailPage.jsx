@@ -57,13 +57,17 @@ export default function StockDetailPage({ stockCode }) {
   const { stock, latest, history } = state.data;
   return (
     <div className="page detail-page">
-      <section className="detail-hero">
+      <section className="detail-hero" aria-labelledby="detail-title">
         <div className="detail-stock-title">
           <span>{stock.stock_code}</span>
-          <h1>{stock.stock_name}</h1>
+          <h1 id="detail-title">{stock.stock_name}</h1>
           <small>{marketLabel(stock.market)}</small>
         </div>
-        <div className="as-of-date"><CalendarDays size={15} />{formatDate(latest?.data_date)}</div>
+        <div className="as-of-date">
+          <CalendarDays size={15} aria-hidden="true" />
+          <span>最近資料</span>
+          <strong>{formatDate(latest?.data_date)}</strong>
+        </div>
       </section>
 
       {!latest ? (
@@ -90,9 +94,12 @@ export default function StockDetailPage({ stockCode }) {
           <section className="detail-section">
             <div className="section-heading compact">
               <div>
-                <span className="section-kicker">TREND</span>
                 <h2>持股比例趨勢</h2>
+                <p>比較大戶與散戶在不同週期的比例變化。</p>
               </div>
+            </div>
+            <div className="range-toolbar">
+              <span>顯示區間</span>
               <div className="range-options">
                 {RANGE_OPTIONS.map((value) => (
                   <button
@@ -112,10 +119,10 @@ export default function StockDetailPage({ stockCode }) {
           <section className="detail-section">
             <div className="section-heading compact">
               <div>
-                <span className="section-kicker">HISTORY</span>
                 <h2>每週明細</h2>
+                <p>依資料日期由新到舊排列。</p>
               </div>
-              <small>{history.length} 期</small>
+              <small className="section-meta">{history.length} 期</small>
             </div>
             <WeeklyHistory history={history} />
           </section>
@@ -212,7 +219,7 @@ function WeeklyHistory({ history }) {
             </div>
             <div className={`week-delta ${delta < 0 ? "down" : "up"}`} title="大戶比例週變化">
               <DeltaIcon size={14} />
-              {older ? formatSignedRatio(delta) : "—"}
+              {older ? formatSignedRatio(delta) : "起始"}
             </div>
           </article>
         );

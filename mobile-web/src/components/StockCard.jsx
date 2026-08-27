@@ -17,18 +17,18 @@ export default function StockCard({ stock, screener = false }) {
 
   return (
     <AppLink className="stock-card" to={`/stocks/${stock.stock_code}`}>
-      <div className="stock-card-heading">
-        <div>
-          <div className="stock-identity">
-            <strong>{stock.stock_code}</strong>
+      <div className="stock-card-head">
+        <div className="stock-identity">
+          <strong>{stock.stock_code}</strong>
+          <div>
             <span>{stock.stock_name}</span>
-          </div>
-          <div className="stock-meta">
-            <span>{marketLabel(stock.market)}</span>
-            <span>資料 {formatDate(latestDate)}</span>
+            <div className="stock-meta">
+              <span>{marketLabel(stock.market)}</span>
+              <span>資料日期 {formatDate(latestDate)}</span>
+            </div>
           </div>
         </div>
-        <ArrowRight className="card-arrow" size={19} />
+        <span className="card-arrow" aria-hidden="true"><ArrowRight size={18} /></span>
       </div>
 
       {screener ? (
@@ -41,12 +41,12 @@ export default function StockCard({ stock, screener = false }) {
 
       <div className="holding-grid">
         <div className="holding-block holding-large">
-          <span>大戶持股</span>
+          <span className="holding-label">大戶持股</span>
           <strong>{formatRatio(latestRatio)}</strong>
           <small>{formatLots(stock.large_share_count)}</small>
         </div>
         <div className="holding-block holding-retail">
-          <span>散戶持股</span>
+          <span className="holding-label">散戶持股</span>
           <strong>{formatRatio(stock.retail_ratio)}</strong>
           <small>{formatLots(stock.retail_share_count)}</small>
         </div>
