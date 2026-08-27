@@ -1,0 +1,56 @@
+import { ArrowRight, TrendingUp } from "lucide-react";
+
+import { AppLink } from "../lib/router.jsx";
+import {
+  formatDate,
+  formatLots,
+  formatRatio,
+  formatSignedPoints,
+  marketLabel,
+} from "../lib/format.js";
+
+export default function StockCard({ stock, screener = false }) {
+  const latestRatio = screener
+    ? stock.latest_large_ratio
+    : stock.large_ratio;
+  const latestDate = screener ? stock.latest_date : stock.data_date;
+
+  return (
+    <AppLink className="stock-card" to={`/stocks/${stock.stock_code}`}>
+      <div className="stock-card-heading">
+        <div>
+          <div className="stock-identity">
+            <strong>{stock.stock_code}</strong>
+            <span>{stock.stock_name}</span>
+          </div>
+          <div className="stock-meta">
+            <span>{marketLabel(stock.market)}</span>
+            <span>資料 {formatDate(latestDate)}</span>
+          </div>
+        </div>
+        <ArrowRight className="card-arrow" size={19} />
+      </div>
+
+      {screener ? (
+        <div className="streak-banner">
+          <TrendingUp size={17} />
+          <span>連續 {stock.streak_weeks} 週增加</span>
+          <strong>{formatSignedPoints(stock.increase_percentage_points)}</strong>
+        </div>
+      ) : null}
+
+      <div className="holding-grid">
+        <div className="holding-block holding-large">
+          <span>大戶持股</span>
+          <strong>{formatRatio(latestRatio)}</strong>
+          <small>{formatLots(stock.large_share_count)}</small>
+        </div>
+        <div className="holding-block holding-retail">
+          <span>散戶持股</span>
+          <strong>{formatRatio(stock.retail_ratio)}</strong>
+          <small>{formatLots(stock.retail_share_count)}</small>
+        </div>
+      </div>
+    </AppLink>
+  );
+}

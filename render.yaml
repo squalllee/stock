@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: tdcc-mobile-web
+    runtime: node
+    plan: free
+    rootDir: mobile-web
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_URL
+        value: https://vngtmamxhvcldecesfwh.supabase.co
+      - key: SUPABASE_SECRET_KEY
+        sync: false
