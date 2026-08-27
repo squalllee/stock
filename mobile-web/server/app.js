@@ -63,8 +63,16 @@ export function createApp({ dataService, staticDirectory = null }) {
   });
 
   if (staticDirectory) {
-    app.use(express.static(staticDirectory, { maxAge: "1h" }));
+    app.use(express.static(staticDirectory, {
+      maxAge: "1h",
+      setHeaders(response, filePath) {
+        if (filePath.endsWith(".html")) {
+          response.setHeader("Cache-Control", "no-cache");
+        }
+      },
+    }));
     app.get("*", (_request, response) => {
+      response.setHeader("Cache-Control", "no-cache");
       response.sendFile("index.html", { root: staticDirectory });
     });
   }

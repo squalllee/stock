@@ -58,7 +58,7 @@ a {
 button:focus-visible,
 input:focus-visible,
 a:focus-visible {
-  outline: 3px solid rgba(57, 214, 180, 0.38);
+  outline: 3px solid rgba(7, 139, 120, 0.38);
   outline-offset: 2px;
 }
 
@@ -137,7 +137,7 @@ a:focus-visible {
   height: 6px;
   border-radius: 50%;
   background: var(--large);
-  box-shadow: 0 0 0 4px rgba(57, 214, 180, 0.1);
+  box-shadow: 0 0 0 4px rgba(7, 139, 120, 0.12);
 }
 
 .app-main {
