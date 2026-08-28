@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import Any, Callable
 
-from stock_master.config import TPEX_PRICE_URL
+from stock_master.config import TPEX_LATEST_PRICE_URL, TPEX_PRICE_URL
 from stock_master.exceptions import StockDataValidationError
 from stock_master.models import PriceHistory
 
@@ -43,11 +43,13 @@ def _row_value(
 
 
 class TPExPriceProvider(PriceProvider):
-    """Fetch TPEx price data through the official code/month endpoint.
+    """Fetch TPEx price data from the official endpoints.
 
     TPEx's historical page exposes one stock code and one month per request.
     The provider therefore receives the stock-master universe and caches each
     ``(stock_code, year, month)`` response for the lifetime of the instance.
+    For an unspecified date, the official all-market closing-quotes endpoint is
+    used so a latest-price sync does not issue one request per stock.
     """
 
     market = "TPEX"
@@ -57,6 +59,7 @@ class TPExPriceProvider(PriceProvider):
         http_client: JsonHttpClient,
         *,
         url: str = TPEX_PRICE_URL,
+        latest_url: str | None = TPEX_LATEST_PRICE_URL,
         stock_codes: Iterable[str] | None = None,
         request_delay_seconds: float = 0.2,
         sleep: Callable[[float], None] = time.sleep,
@@ -65,6 +68,7 @@ class TPExPriceProvider(PriceProvider):
             raise ValueError("request_delay_seconds cannot be negative")
         self.http_client = http_client
         self.url = url
+        self.latest_url = latest_url
         self.stock_codes: set[str] = set()
         self.set_stock_codes(stock_codes or ())
         self.request_delay_seconds = request_delay_seconds
@@ -92,6 +96,9 @@ class TPExPriceProvider(PriceProvider):
             self.last_no_data = True
             logger.info("TPEx price has no configured stock codes")
             return []
+
+        if trade_date is None and self.latest_url:
+            return self._fetch_latest()
 
         month_date = trade_date or date.today()
         values: list[PriceHistory] = []
@@ -122,6 +129,198 @@ class TPExPriceProvider(PriceProvider):
             len(values),
         )
         return values
+
+    def _fetch_latest(self) -> list[PriceHistory]:
+        """Fetch the latest TPEx closing quotes in one market-wide request."""
+
+        assert self.latest_url is not None
+        logger.info("Fetching latest TPEx price data from market-wide endpoint")
+        payload = self.http_client.get_json(self.latest_url)
+        if not isinstance(payload, list):
+            raise StockDataValidationError(
+                "TPEx latest price response schema changed: expected a list."
+            )
+
+        self.last_raw_record_count = len(payload)
+        if not payload:
+            self.last_no_data = True
+            logger.info("TPEx latest price response is empty")
+            return []
+
+        actual_date: str | None = None
+        values: list[PriceHistory] = []
+        for row_index, raw_record in enumerate(payload):
+            if not isinstance(raw_record, Mapping):
+                raise StockDataValidationError(
+                    "TPEx latest price response schema changed: row "
+                    f"{row_index} is not an object."
+                )
+            raw_date = self._required_field(
+                raw_record,
+                ("Date", "date", "資料日期"),
+                field="trade_date",
+                row_index=row_index,
+            )
+            row_date = normalize_trade_date(raw_date, self.market)
+            if actual_date is None:
+                actual_date = row_date
+            elif row_date != actual_date:
+                raise StockDataValidationError(
+                    "TPEx latest price returned mixed trade dates: expected "
+                    f"{actual_date}, got {row_date}."
+                )
+
+            stock_code = str(
+                self._required_field(
+                    raw_record,
+                    ("SecuritiesCompanyCode", "StockCode", "Code", "證券代號"),
+                    field="stock_code",
+                    row_index=row_index,
+                )
+            ).replace("\ufeff", "").strip()
+            if stock_code not in self.stock_codes:
+                continue
+
+            record = PriceHistory(
+                trade_date=row_date,
+                stock_code=stock_code,
+                market=self.market,
+                trade_volume=self._parse_latest_int(
+                    raw_record,
+                    ("TradingShares", "成交股數"),
+                    field="trade_volume",
+                    row_index=row_index,
+                ),
+                trade_value=self._parse_latest_int(
+                    raw_record,
+                    ("TransactionAmount", "TradingAmount", "成交金額"),
+                    field="trade_value",
+                    row_index=row_index,
+                ),
+                open_price=self._parse_latest_price(
+                    raw_record,
+                    ("Open", "OpeningPrice", "開盤"),
+                    field="open_price",
+                    row_index=row_index,
+                ),
+                high_price=self._parse_latest_price(
+                    raw_record,
+                    ("High", "HighestPrice", "最高"),
+                    field="high_price",
+                    row_index=row_index,
+                ),
+                low_price=self._parse_latest_price(
+                    raw_record,
+                    ("Low", "LowestPrice", "最低"),
+                    field="low_price",
+                    row_index=row_index,
+                ),
+                close_price=self._parse_latest_price(
+                    raw_record,
+                    ("Close", "ClosingPrice", "收盤"),
+                    field="close_price",
+                    row_index=row_index,
+                ),
+                transaction_count=self._parse_latest_optional_int(
+                    raw_record,
+                    ("TransactionNumber", "TransactionCount", "成交筆數"),
+                    field="transaction_count",
+                    row_index=row_index,
+                ),
+            )
+            validate_price_record(record, self.market)
+            values.append(record)
+
+        self.last_trade_date = actual_date
+        if not values:
+            self.last_no_data = True
+            logger.info(
+                "TPEx latest price has no configured-stock data for %s",
+                actual_date or "latest",
+            )
+            return []
+
+        logger.info(
+            "TPEx latest price date=%s returned %s configured-stock records "
+            "from %s market rows",
+            actual_date,
+            len(values),
+            len(payload),
+        )
+        return values
+
+    @staticmethod
+    def _required_field(
+        record: Mapping[str, Any],
+        aliases: tuple[str, ...],
+        *,
+        field: str,
+        row_index: int,
+    ) -> object:
+        for alias in aliases:
+            if alias in record and record[alias] not in (None, ""):
+                return record[alias]
+        raise StockDataValidationError(
+            "TPEx latest price response schema changed: row "
+            f"{row_index} is missing {field}."
+        )
+
+    @classmethod
+    def _parse_latest_int(
+        cls,
+        record: Mapping[str, Any],
+        aliases: tuple[str, ...],
+        *,
+        field: str,
+        row_index: int,
+    ) -> int:
+        value = cls._required_field(
+            record, aliases, field=field, row_index=row_index
+        )
+        return parse_non_negative_int(
+            value,
+            market=cls.market,
+            field=field,
+            record_index=row_index,
+        )
+
+    @classmethod
+    def _parse_latest_optional_int(
+        cls,
+        record: Mapping[str, Any],
+        aliases: tuple[str, ...],
+        *,
+        field: str,
+        row_index: int,
+    ) -> int | None:
+        value = cls._required_field(
+            record, aliases, field=field, row_index=row_index
+        )
+        return parse_optional_non_negative_int(
+            value,
+            market=cls.market,
+            field=field,
+            record_index=row_index,
+        )
+
+    @classmethod
+    def _parse_latest_price(
+        cls,
+        record: Mapping[str, Any],
+        aliases: tuple[str, ...],
+        *,
+        field: str,
+        row_index: int,
+    ) -> float | None:
+        value = cls._required_field(
+            record, aliases, field=field, row_index=row_index
+        )
+        return parse_optional_price(
+            value,
+            market=cls.market,
+            field=field,
+            record_index=row_index,
+        )
 
     def _get_month(self, stock_code: str, year: int, month: int) -> list[PriceHistory]:
         key = (stock_code, year, month)
@@ -240,4 +439,3 @@ class TPExPriceProvider(PriceProvider):
         raise StockDataValidationError(
             "TPEx price response schema changed: daily price table not found."
         )
-

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 from stock_master.config import (
+    BILLDB_SUPABASE_URL,
     DEFAULT_DATABASE_PATH,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MARGIN_HISTORY_DAYS,
@@ -18,6 +20,7 @@ from stock_master.config import (
     DEFAULT_MIN_EXPECTED_TPEX_STOCKS,
     DEFAULT_MIN_EXPECTED_TWSE_STOCKS,
     DEFAULT_RETRY_BACKOFF_SECONDS,
+    DEFAULT_SUPABASE_TDCC_BATCH_SIZE,
     DEFAULT_TDCC_HISTORY_DAYS,
     DEFAULT_TDCC_HISTORY_REQUEST_DELAY_SECONDS,
     DEFAULT_TDCC_HISTORY_WORKERS,
@@ -32,6 +35,7 @@ from stock_master.config import (
     TWSE_MARGIN_URL,
     TWSE_PRICE_URL,
     TWSE_API_URL,
+    load_project_dotenv,
 )
 from stock_master.exceptions import StockMasterError
 from stock_master.providers import (
@@ -60,7 +64,9 @@ from stock_master.services import (
     PriceHistorySyncService,
     PriceSyncService,
     StockSyncService,
+    SupabaseTDCCSyncService,
     TDCCSyncService,
+    create_supabase_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,6 +226,67 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Initial retry backoff (default: {DEFAULT_RETRY_BACKOFF_SECONDS})",
     )
     tdcc_history_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="logging level (default: INFO)",
+    )
+
+    tdcc_supabase_parser = subparsers.add_parser(
+        "tdcc-supabase-sync",
+        help="upsert one calendar year of local TDCC data into Supabase",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DATABASE_PATH,
+        help=f"SQLite path (default: {DEFAULT_DATABASE_PATH})",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--year",
+        type=int,
+        default=date.today().year,
+        help="calendar year to sync (default: current year)",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--supabase-url",
+        default=None,
+        help=(
+            "Supabase project URL; defaults to SUPABASE_URL or the BillDB URL"
+        ),
+    )
+    tdcc_supabase_parser.add_argument(
+        "--table",
+        default="tdcc_distributions",
+        help="Supabase table name (default: tdcc_distributions)",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_SUPABASE_TDCC_BATCH_SIZE,
+        help=(
+            "rows per Supabase upsert request "
+            f"(default: {DEFAULT_SUPABASE_TDCC_BATCH_SIZE})"
+        ),
+    )
+    tdcc_supabase_parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help=f"Supabase attempts per batch (default: {DEFAULT_MAX_ATTEMPTS})",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--backoff-seconds",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF_SECONDS,
+        help=f"Initial retry backoff (default: {DEFAULT_RETRY_BACKOFF_SECONDS})",
+    )
+    tdcc_supabase_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate and count rows without connecting to Supabase",
+    )
+    tdcc_supabase_parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
@@ -493,7 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     web_parser = subparsers.add_parser(
         "web",
-        help="start the read-only Taiwan stock Web query platform",
+        help="start the Taiwan stock Web query and sync platform",
     )
     web_parser.add_argument(
         "--db",
@@ -517,6 +584,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="logging level (default: INFO)",
+    )
+
+    desktop_parser = subparsers.add_parser(
+        "desktop",
+        help="open the Windows/local Tkinter synchronization console",
+    )
+    desktop_parser.add_argument(
+        "--supabase-url",
+        default=None,
+        help="Supabase project URL (default: SUPABASE_URL or BillDB URL)",
     )
     return parser
 
@@ -630,6 +707,54 @@ def _run_tdcc_history_sync(args: argparse.Namespace) -> int:
     print()
     print(f"Database         : {args.db}")
     print("TDCC recent history sync completed successfully.")
+    return 0
+
+
+def _run_tdcc_supabase_sync(args: argparse.Namespace) -> int:
+    load_project_dotenv()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(levelname)s %(message)s",
+    )
+    supabase_url = (
+        args.supabase_url
+        or os.environ.get("SUPABASE_URL")
+        or BILLDB_SUPABASE_URL
+    )
+    supabase_key = (
+        os.environ.get("SUPABASE_SECRET_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    )
+    client = None
+    if not args.dry_run:
+        client = create_supabase_client(supabase_url, supabase_key or "")
+
+    service = SupabaseTDCCSyncService(
+        args.db,
+        client,
+        table_name=args.table,
+        batch_size=args.batch_size,
+        max_attempts=args.max_attempts,
+        backoff_seconds=args.backoff_seconds,
+    )
+    result = service.sync(year=args.year, dry_run=args.dry_run)
+
+    print("TDCC Supabase Sync")
+    print()
+    print(f"Year          : {result.year}")
+    print(f"SQLite rows   : {result.source_count}")
+    print(f"Synced rows   : {result.synced_count}")
+    print(f"Skipped rows  : {result.skipped_count}")
+    print(f"Batches       : {result.batch_count}")
+    print(f"Supabase URL  : {supabase_url}")
+    print(f"Table         : {args.table}")
+    print(f"Dry run       : {'yes' if result.dry_run else 'no'}")
+    print()
+    print(
+        "Validation completed successfully."
+        if result.dry_run
+        else "TDCC Supabase sync completed successfully."
+    )
     return 0
 
 
@@ -838,7 +963,7 @@ def _run_margin_estimate(args: argparse.Namespace) -> int:
 
 
 def _run_web(args: argparse.Namespace) -> int:
-    """Start the read-only Web server without importing providers or sync code."""
+    """Start the Web server with query pages and an explicit sync action."""
 
     import uvicorn
 
@@ -857,6 +982,14 @@ def _run_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_desktop(args: argparse.Namespace) -> int:
+    """Open the local Tkinter synchronization console."""
+
+    from stock_master.desktop import run_desktop_app
+
+    return run_desktop_app(args.supabase_url)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
 
@@ -870,12 +1003,14 @@ def main(argv: list[str] | None = None) -> int:
         "tdcc-sync",
         "tdcc-month-sync",
         "tdcc-history-sync",
+        "tdcc-supabase-sync",
         "margin-sync",
         "margin-history-sync",
         "price-sync",
         "price-history-sync",
         "margin-estimate",
         "web",
+        "desktop",
     }:
         try:
             if args.command == "sync":
@@ -884,6 +1019,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _run_tdcc_sync(args)
             if args.command in {"tdcc-month-sync", "tdcc-history-sync"}:
                 return _run_tdcc_history_sync(args)
+            if args.command == "tdcc-supabase-sync":
+                return _run_tdcc_supabase_sync(args)
             if args.command == "margin-sync":
                 return _run_margin_sync(args)
             if args.command == "margin-history-sync":
@@ -894,12 +1031,14 @@ def main(argv: list[str] | None = None) -> int:
                 return _run_price_history_sync(args)
             if args.command == "web":
                 return _run_web(args)
+            if args.command == "desktop":
+                return _run_desktop(args)
             return _run_margin_estimate(args)
         except StockMasterError as exc:
             logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")
             logger.error("%s", exc)
             return 1
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")
             logger.error("%s", exc)
             return 1

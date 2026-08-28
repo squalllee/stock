@@ -1,2 +1,1 @@
-"""HTTP route modules for the read-only stock Web platform."""
-
+"""HTTP route modules for the stock Web platform."""

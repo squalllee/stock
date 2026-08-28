@@ -1,4 +1,4 @@
-"""Application query service for the read-only stock Web platform."""
+"""Application query service for the stock Web platform."""
 
 from __future__ import annotations
 

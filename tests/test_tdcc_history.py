@@ -74,6 +74,11 @@ class FakeHistoryClient:
         return result_html(fields["scaDate"], fields["stockNo"], token)
 
 
+class MissingSessionFieldsClient(FakeHistoryClient):
+    def get_text(self, url):
+        return "<html><body>temporary TDCC page</body></html>"
+
+
 def test_parse_history_page_extracts_rows_and_skips_adjustments_and_total():
     page = parse_history_page(
         result_html("20260731", "2330", "next-token"),
@@ -108,6 +113,51 @@ def test_parse_history_page_prefers_selected_date_when_display_year_is_malformed
 
     assert page.selected_dates == ("2026-08-07",)
     assert page.records[0].data_date == "2026-08-07"
+
+
+def test_parse_history_page_accepts_slash_separated_result_date():
+    slash_date_html = result_html(
+        "20260807", "2330", "next-token"
+    ).replace("115年08月07日", "115/08/07")
+
+    page = parse_history_page(
+        slash_date_html,
+        expected_date="2026-08-07",
+        expected_stock_code="2330",
+    )
+
+    assert page.records[0].data_date == "2026-08-07"
+
+
+def test_parse_history_page_uses_selected_date_when_heading_is_missing():
+    missing_heading_html = result_html(
+        "20260807", "2330", "next-token"
+    ).replace("<span>資料日期：115年08月07日</span>", "")
+
+    page = parse_history_page(
+        missing_heading_html,
+        expected_date="2026-08-07",
+        expected_stock_code="2330",
+    )
+
+    assert page.selected_dates == ("2026-08-07",)
+    assert page.records[0].data_date == "2026-08-07"
+
+
+def test_parse_history_page_treats_no_data_variants_as_empty_results():
+    no_data_html = result_html("20260807", "2330", "next-token").replace(
+        '<span>資料日期：115年08月07日</span>',
+        '<span class="font">查無資料</span>',
+    )
+
+    page = parse_history_page(
+        no_data_html,
+        expected_date="2026-08-08",
+        expected_stock_code="2330",
+    )
+
+    assert page.no_data is True
+    assert page.records == ()
 
 
 def test_parse_history_page_extracts_catalog_without_result_table():
@@ -156,6 +206,96 @@ def test_historical_provider_filters_dates_and_chains_csrf_tokens():
     assert clients[0].forms[0]["SYNCHRONIZER_TOKEN"] == "catalog-token"
     assert clients[0].forms[1]["SYNCHRONIZER_TOKEN"] == "token-1"
     assert clients[0].forms[2]["SYNCHRONIZER_TOKEN"] == "token-2"
+
+
+def test_historical_provider_skips_checkpoints_and_fetches_newest_first():
+    client = FakeHistoryClient()
+    provider = TDCCHistoricalDistributionProvider(
+        client,
+        days=20,
+        end_date=date(2026, 8, 7),
+        workers=1,
+        request_delay_seconds=0,
+        newest_first=True,
+        sleep=lambda _: None,
+    )
+
+    records = provider.fetch(
+        {"2330"},
+        completed_queries={("2026-08-07", "2330")},
+    )
+
+    assert [form["scaDate"] for form in client.forms] == [
+        "20260731",
+        "20260724",
+    ]
+    assert len(records) == 4
+    assert [
+        (result.data_date, result.stock_code, result.record_count)
+        for result in provider.last_query_results
+    ] == [
+        ("2026-07-31", "2330", 2),
+        ("2026-07-24", "2330", 2),
+    ]
+
+
+def test_historical_provider_refreshes_session_after_incomplete_result_page():
+    clients = []
+
+    class FirstResultIsCatalogClient(FakeHistoryClient):
+        def post_form(self, url, fields):
+            self.forms.append(dict(fields))
+            return INITIAL_HTML
+
+    def factory():
+        client = (
+            FirstResultIsCatalogClient()
+            if not clients
+            else FakeHistoryClient()
+        )
+        clients.append(client)
+        return client
+
+    provider = TDCCHistoricalDistributionProvider(
+        factory,
+        days=20,
+        end_date=date(2026, 8, 7),
+        workers=1,
+        request_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    records = provider.fetch({"2330"})
+
+    assert len(clients) == 2
+    assert len(records) == 6
+    assert provider.last_request_count == 4
+    assert len(provider.last_query_results) == 3
+
+
+def test_historical_provider_reopens_session_when_catalog_fields_are_missing():
+    clients = []
+    sleeps = []
+
+    def factory():
+        client = MissingSessionFieldsClient() if not clients else FakeHistoryClient()
+        clients.append(client)
+        return client
+
+    provider = TDCCHistoricalDistributionProvider(
+        factory,
+        days=20,
+        end_date=date(2026, 8, 7),
+        workers=1,
+        request_delay_seconds=0,
+        sleep=sleeps.append,
+    )
+
+    dates = provider.available_dates()
+
+    assert dates == ("2026-07-24", "2026-07-31", "2026-08-07")
+    assert len(clients) == 2
+    assert sleeps == [0.5]
 
 
 def test_cli_exposes_month_and_history_aliases():

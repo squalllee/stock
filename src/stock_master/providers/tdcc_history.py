@@ -5,15 +5,16 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, timedelta
+from html import unescape
 from html.parser import HTMLParser
 from typing import Protocol
 
 from stock_master.config import TDCC_HISTORY_URL
-from stock_master.exceptions import StockDataValidationError
+from stock_master.exceptions import StockDataValidationError, StockProviderError
 from stock_master.models import TDCCDistribution
 
 from .tdcc import normalize_data_date, normalize_tdcc_record
@@ -21,15 +22,34 @@ from .tdcc import normalize_data_date, normalize_tdcc_record
 logger = logging.getLogger(__name__)
 
 _DATE_HEADING_PATTERN = re.compile(
-    r"資料日期\s*[：:]\s*(?P<year>\d{3,4})年\s*"
-    r"(?P<month>\d{1,2})月\s*(?P<day>\d{1,2})日"
+    r"資料日期\s*[：:]\s*(?P<value>"
+    r"\d{3,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日"
+    r"|\d{3,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}"
+    r"|\d{7,8}"
+    r")"
 )
 _STOCK_HEADING_PATTERN = re.compile(
     r"證券代號\s*[：:]\s*(?P<code>[A-Za-z0-9]+)"
 )
-_NO_DATA_MARKER = "查無此資料"
+_NO_DATA_MARKERS = (
+    "查無此資料",
+    "查無資料",
+    "查無符合",
+    "沒有資料",
+    "無資料",
+    "no data",
+)
 _ADJUSTMENT_MARKER = "差異數調整"
 _TOTAL_MARKERS = ("合計", "總計", "total", "grandtotal")
+_SESSION_OPEN_ATTEMPTS = 3
+_RESULT_SESSION_ATTEMPTS = 2
+_RETRYABLE_RESULT_ERROR_MARKERS = (
+    "missing data date",
+    "missing stock code",
+    "missing distribution table",
+    "missing form session fields",
+    "no available data dates",
+)
 
 
 class TDCCHistoryHttpClient(Protocol):
@@ -140,10 +160,23 @@ class TDCCHistoryPage:
 @dataclass(frozen=True, slots=True)
 class _WorkerResult:
     records: tuple[TDCCDistribution, ...]
+    query_results: tuple[TDCCHistoricalQueryResult, ...]
     skipped_total_count: int
     skipped_adjustment_count: int
     request_count: int
-    record_counts_by_date: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class TDCCHistoricalQueryResult:
+    """One successfully completed stock/date query, including no-data results."""
+
+    data_date: str
+    stock_code: str
+    record_count: int
+
+    @property
+    def status(self) -> str:
+        return "completed" if self.record_count else "no_data"
 
 
 def _clean_cell(parts: Sequence[str]) -> str:
@@ -211,14 +244,33 @@ def _distribution_table_rows(
 
 
 def _extract_result_date(html: str) -> str:
-    match = _DATE_HEADING_PATTERN.search(html)
+    # The result page has appeared with both ROC ``115年08月07日`` and
+    # slash-separated ``115/08/07`` labels. Search visible text so an HTML
+    # element or ``&nbsp;`` between the label and value does not hide a valid
+    # date from the parser.
+    visible_text = unescape(re.sub(r"<[^>]+>", " ", html)).replace("\xa0", " ")
+    match = _DATE_HEADING_PATTERN.search(visible_text)
     if match is None:
         raise StockDataValidationError(
             "TDCC historical response schema changed: missing data date."
         )
-    return normalize_data_date(
-        f"{match.group('year')}/{match.group('month')}/{match.group('day')}"
+    return normalize_data_date(match.group("value"))
+
+
+def _is_no_data_response(html: str) -> bool:
+    """Return whether TDCC rendered its no-result message."""
+
+    visible_text = unescape(re.sub(r"<[^>]+>", " ", html)).replace("\xa0", " ")
+    normalized = "".join(visible_text.casefold().split())
+    return any(
+        "".join(marker.casefold().split()) in normalized
+        for marker in _NO_DATA_MARKERS
     )
+
+
+def _is_retryable_result_error(exc: StockDataValidationError) -> bool:
+    message = str(exc).casefold()
+    return any(marker in message for marker in _RETRYABLE_RESULT_ERROR_MARKERS)
 
 
 def _normalize_date_values(raw_values: Sequence[str]) -> tuple[str, ...]:
@@ -267,7 +319,7 @@ def parse_history_page(
             "TDCC historical response schema changed: no available data dates."
         )
 
-    if _NO_DATA_MARKER in html:
+    if _is_no_data_response(html):
         return TDCCHistoryPage(
             token=token,
             uri=uri,
@@ -288,8 +340,21 @@ def parse_history_page(
             selected_dates=_normalize_date_values(parser.selected_date_values),
         )
 
-    actual_date = _extract_result_date(html)
     selected_dates = _normalize_date_values(parser.selected_date_values)
+    try:
+        actual_date = _extract_result_date(html)
+    except StockDataValidationError:
+        if expected_date is None or expected_date not in selected_dates:
+            raise
+        # TDCC occasionally omits the visible date heading while retaining the
+        # selected form option and a valid result table. The submitted date and
+        # selected option independently agree, so use that value safely.
+        logger.warning(
+            "TDCC historical result omitted its display date; using selected "
+            "date %s",
+            expected_date,
+        )
+        actual_date = expected_date
     if expected_date is not None:
         if selected_dates and expected_date not in selected_dates:
             raise StockDataValidationError(
@@ -424,6 +489,7 @@ class TDCCHistoricalDistributionProvider:
         end_date: date | None = None,
         workers: int = 2,
         request_delay_seconds: float = 0.2,
+        newest_first: bool = False,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if days < 1:
@@ -443,6 +509,7 @@ class TDCCHistoricalDistributionProvider:
         self.start_date = self.end_date - timedelta(days=days)
         self.workers = workers
         self.request_delay_seconds = request_delay_seconds
+        self.newest_first = newest_first
         self._sleep = sleep
         self.last_data_dates: tuple[str, ...] = ()
         self.last_skipped_total_count = 0
@@ -450,9 +517,29 @@ class TDCCHistoricalDistributionProvider:
         self.last_request_count = 0
         self.last_empty_query_count = 0
         self.last_raw_record_count = 0
+        self.last_query_results: tuple[TDCCHistoricalQueryResult, ...] = ()
 
-    def fetch(self, stock_codes: set[str]) -> list[TDCCDistribution]:
-        """Fetch every available weekly date in the configured date window."""
+    def available_dates(self) -> tuple[str, ...]:
+        """Return official TDCC dates in this provider's configured window."""
+
+        _client, catalog = self._open_session()
+        selected_dates = self._select_dates(catalog.available_dates)
+        if not selected_dates:
+            raise StockDataValidationError(
+                "TDCC historical query has no available dates in the requested "
+                f"window {self.start_date.isoformat()}..{self.end_date.isoformat()}."
+            )
+        self.last_data_dates = selected_dates
+        return selected_dates
+
+    def fetch(
+        self,
+        stock_codes: set[str],
+        *,
+        completed_queries: set[tuple[str, str]] | None = None,
+        selected_dates: Sequence[str] | None = None,
+    ) -> list[TDCCDistribution]:
+        """Fetch pending weekly stock/date queries in the configured window."""
 
         valid_stock_codes = sorted(
             {
@@ -466,31 +553,47 @@ class TDCCHistoricalDistributionProvider:
             logger.info("TDCC historical fetch skipped because stock universe is empty")
             return []
 
-        catalog_client = self._client_factory()
-        catalog = parse_history_page(catalog_client.get_text(self.url))
-        selected_dates = tuple(
-            sorted(
-                {
-                    available_date
-                    for available_date in catalog.available_dates
-                    if self.start_date.isoformat()
-                    <= available_date
-                    <= self.end_date.isoformat()
-                }
-            )
-        )
+        catalog_client, catalog = self._open_session()
+        official_dates = self._select_dates(catalog.available_dates)
+        if selected_dates is None:
+            selected_dates = official_dates
+        else:
+            selected_dates = tuple(selected_dates)
+            invalid_dates = set(selected_dates) - set(official_dates)
+            if invalid_dates:
+                raise StockDataValidationError(
+                    "TDCC historical requested dates are not available in the "
+                    "official catalog: " + ", ".join(sorted(invalid_dates))
+                )
         if not selected_dates:
             raise StockDataValidationError(
                 "TDCC historical query has no available dates in the requested "
                 f"window {self.start_date.isoformat()}..{self.end_date.isoformat()}."
             )
-        self.last_data_dates = selected_dates
+        self.last_data_dates = tuple(selected_dates)
 
-        worker_count = min(self.workers, len(valid_stock_codes))
-        chunks = _chunk_values(valid_stock_codes, worker_count)
+        completed = completed_queries or set()
+        pending_stock_codes = [
+            stock_code
+            for stock_code in valid_stock_codes
+            if any(
+                (data_date, stock_code) not in completed
+                for data_date in selected_dates
+            )
+        ]
+        if not pending_stock_codes:
+            logger.info(
+                "TDCC historical fetch skipped because all %s stock/date queries "
+                "are checkpointed",
+                len(valid_stock_codes) * len(selected_dates),
+            )
+            return []
+
+        worker_count = min(self.workers, len(pending_stock_codes))
+        chunks = _chunk_values(pending_stock_codes, worker_count)
         logger.info(
-            "Starting TDCC historical fetch for %s master stocks, dates=%s, workers=%s",
-            len(valid_stock_codes),
+            "Starting TDCC historical fetch for %s pending stocks, dates=%s, workers=%s",
+            len(pending_stock_codes),
             ",".join(selected_dates),
             len(chunks),
         )
@@ -502,12 +605,18 @@ class TDCCHistoricalDistributionProvider:
                     selected_dates,
                     client=catalog_client,
                     catalog=catalog,
+                    completed_queries=completed,
                 )
             ]
         else:
             with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
                 futures = [
-                    executor.submit(self._fetch_chunk, chunk, selected_dates)
+                    executor.submit(
+                        self._fetch_chunk,
+                        chunk,
+                        selected_dates,
+                        completed_queries=completed,
+                    )
                     for chunk in chunks
                 ]
                 worker_results = [future.result() for future in futures]
@@ -517,29 +626,11 @@ class TDCCHistoricalDistributionProvider:
             for result in worker_results
             for record in result.records
         ]
-        record_counts_by_date: dict[str, int] = {}
-        for result in worker_results:
-            for data_date, count in result.record_counts_by_date.items():
-                record_counts_by_date[data_date] = (
-                    record_counts_by_date.get(data_date, 0) + count
-                )
-        missing_dates = [
-            data_date
-            for data_date in selected_dates
-            if record_counts_by_date.get(data_date, 0) == 0
-        ]
-        if missing_dates:
-            raise StockDataValidationError(
-                "TDCC historical query returned no distribution records for "
-                + ", ".join(missing_dates)
-                + "; refusing to sync."
-            )
-        if not records:
-            raise StockDataValidationError(
-                "TDCC historical query returned no distribution records; refusing "
-                "to sync."
-            )
-
+        query_results = tuple(
+            query_result
+            for result in worker_results
+            for query_result in result.query_results
+        )
         self.last_skipped_total_count = sum(
             result.skipped_total_count for result in worker_results
         )
@@ -550,18 +641,14 @@ class TDCCHistoricalDistributionProvider:
             result.request_count for result in worker_results
         )
         self.last_empty_query_count = sum(
-            sum(
-                1
-                for count in result.record_counts_by_date.values()
-                if count == 0
-            )
-            for result in worker_results
+            1 for result in query_results if result.record_count == 0
         )
         self.last_raw_record_count = (
             len(records)
             + self.last_skipped_total_count
             + self.last_skipped_adjustment_count
         )
+        self.last_query_results = query_results
         records.sort(
             key=lambda record: (
                 record.data_date,
@@ -581,6 +668,55 @@ class TDCCHistoricalDistributionProvider:
         )
         return records
 
+    def _select_dates(self, available_dates: Sequence[str]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    available_date
+                    for available_date in available_dates
+                    if self.start_date.isoformat()
+                    <= available_date
+                    <= self.end_date.isoformat()
+                },
+                reverse=self.newest_first,
+            )
+        )
+
+    def _open_session(
+        self,
+    ) -> tuple[TDCCHistoryHttpClient, TDCCHistoryPage]:
+        """Create a TDCC session, retrying temporary HTML/error pages."""
+
+        for attempt in range(1, _SESSION_OPEN_ATTEMPTS + 1):
+            session = self._client_factory()
+            try:
+                page = parse_history_page(session.get_text(self.url))
+                return session, page
+            except StockProviderError as caught:
+                error: Exception = caught
+                retryable = True
+            except StockDataValidationError as caught:
+                error = caught
+                retryable = _is_retryable_result_error(caught)
+
+            if not retryable or attempt >= _SESSION_OPEN_ATTEMPTS:
+                raise StockDataValidationError(
+                    "TDCC historical session initialization failed after "
+                    f"{attempt} attempt(s): {error}"
+                ) from error
+            delay = max(self.request_delay_seconds, 0.5) * (2 ** (attempt - 1))
+            logger.warning(
+                "TDCC historical session attempt %s/%s returned an incomplete "
+                "page; opening a new session in %.1f seconds: %s",
+                attempt,
+                _SESSION_OPEN_ATTEMPTS,
+                delay,
+                error,
+            )
+            self._sleep(delay)
+
+        raise AssertionError("unreachable TDCC session retry state")
+
     def _fetch_chunk(
         self,
         stock_codes: Sequence[str],
@@ -588,9 +724,12 @@ class TDCCHistoricalDistributionProvider:
         *,
         client: TDCCHistoryHttpClient | None = None,
         catalog: TDCCHistoryPage | None = None,
+        completed_queries: set[tuple[str, str]] | None = None,
     ) -> _WorkerResult:
-        session = client or self._client_factory()
-        page = catalog or parse_history_page(session.get_text(self.url))
+        if client is not None and catalog is not None:
+            session, page = client, catalog
+        else:
+            session, page = self._open_session()
         if not set(selected_dates).issubset(page.available_dates):
             raise StockDataValidationError(
                 "TDCC historical sessions expose different available dates; "
@@ -601,42 +740,84 @@ class TDCCHistoricalDistributionProvider:
         uri = page.uri
         first_date = page.first_date
         records: list[TDCCDistribution] = []
+        query_results: list[TDCCHistoricalQueryResult] = []
         skipped_total_count = 0
         skipped_adjustment_count = 0
         request_count = 0
-        record_counts_by_date = {data_date: 0 for data_date in selected_dates}
+        completed = completed_queries or set()
 
         for stock_index, stock_code in enumerate(stock_codes, start=1):
             for data_date in selected_dates:
-                response_html = session.post_form(
-                    self.url,
-                    {
-                        "method": "submit",
-                        "firDate": _compact_date(first_date),
-                        "scaDate": _compact_date(data_date),
-                        "sqlMethod": "StockNo",
-                        "stockNo": stock_code,
-                        "stockName": "",
-                        "SYNCHRONIZER_URI": uri,
-                        "SYNCHRONIZER_TOKEN": token,
-                    },
-                )
-                request_count += 1
-                response = parse_history_page(
-                    response_html,
-                    expected_date=data_date,
-                    expected_stock_code=stock_code,
-                )
+                if (data_date, stock_code) in completed:
+                    continue
+                for result_attempt in range(1, _RESULT_SESSION_ATTEMPTS + 1):
+                    response_html = session.post_form(
+                        self.url,
+                        {
+                            "method": "submit",
+                            "firDate": _compact_date(first_date),
+                            "scaDate": _compact_date(data_date),
+                            "sqlMethod": "StockNo",
+                            "stockNo": stock_code,
+                            "stockName": "",
+                            "SYNCHRONIZER_URI": uri,
+                            "SYNCHRONIZER_TOKEN": token,
+                        },
+                    )
+                    request_count += 1
+                    try:
+                        response = parse_history_page(
+                            response_html,
+                            expected_date=data_date,
+                            expected_stock_code=stock_code,
+                        )
+                    except StockDataValidationError as exc:
+                        if (
+                            result_attempt >= _RESULT_SESSION_ATTEMPTS
+                            or not _is_retryable_result_error(exc)
+                        ):
+                            raise StockDataValidationError(
+                                "TDCC historical query failed for "
+                                f"stock {stock_code}, date {data_date}: {exc}"
+                            ) from exc
+                        delay = max(self.request_delay_seconds, 0.5)
+                        logger.warning(
+                            "TDCC historical result was incomplete for stock %s, "
+                            "date %s; refreshing session and retrying in %.1f "
+                            "seconds: %s",
+                            stock_code,
+                            data_date,
+                            delay,
+                            exc,
+                        )
+                        self._sleep(delay)
+                        session, page = self._open_session()
+                        if data_date not in page.available_dates:
+                            raise StockDataValidationError(
+                                "TDCC refreshed session no longer provides date "
+                                f"{data_date}."
+                            ) from exc
+                        token = page.token
+                        uri = page.uri
+                        first_date = page.first_date
+                        continue
+                    break
                 token = response.token
                 uri = response.uri
                 first_date = response.first_date
+                query_results.append(
+                    TDCCHistoricalQueryResult(
+                        data_date=data_date,
+                        stock_code=stock_code,
+                        record_count=len(response.records),
+                    )
+                )
                 if response.no_data:
                     if self.request_delay_seconds:
                         self._sleep(self.request_delay_seconds)
                     continue
 
                 records.extend(response.records)
-                record_counts_by_date[data_date] += len(response.records)
                 skipped_total_count += response.skipped_total_count
                 skipped_adjustment_count += response.skipped_adjustment_count
                 if self.request_delay_seconds:
@@ -651,10 +832,10 @@ class TDCCHistoricalDistributionProvider:
 
         return _WorkerResult(
             records=tuple(records),
+            query_results=tuple(query_results),
             skipped_total_count=skipped_total_count,
             skipped_adjustment_count=skipped_adjustment_count,
             request_count=request_count,
-            record_counts_by_date=record_counts_by_date,
         )
 
     def _reset_stats(self) -> None:
@@ -664,3 +845,4 @@ class TDCCHistoricalDistributionProvider:
         self.last_request_count = 0
         self.last_empty_query_count = 0
         self.last_raw_record_count = 0
+        self.last_query_results = ()

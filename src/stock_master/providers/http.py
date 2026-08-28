@@ -6,8 +6,9 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from json import JSONDecodeError
+from http.client import IncompleteRead, RemoteDisconnected
 from http.cookiejar import CookieJar
+from json import JSONDecodeError
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import (
@@ -22,6 +23,25 @@ from stock_master.exceptions import StockProviderError
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_REDIRECT_STATUS_CODES = frozenset({307, 308})
+
+
+def _content_range_total(response: object) -> int | None:
+    """Return the total byte count from a ``Content-Range`` header."""
+
+    header: object | None = None
+    headers = getattr(response, "headers", None)
+    if headers is not None and hasattr(headers, "get"):
+        header = headers.get("Content-Range")
+    if header is None:
+        getheader = getattr(response, "getheader", None)
+        if callable(getheader):
+            header = getheader("Content-Range")
+    if not isinstance(header, str) or "/" not in header:
+        return None
+    total = header.rsplit("/", 1)[1].strip()
+    if not total.isdigit():
+        return None
+    return int(total)
 
 
 class JsonHttpClient:
@@ -59,14 +79,21 @@ class JsonHttpClient:
         """Return a decoded JSON payload or raise StockProviderError."""
 
         last_error: Exception | None = None
+        downloaded_bytes = b""
 
         for attempt in range(1, self.max_attempts + 1):
+            range_requested = bool(downloaded_bytes)
+            response_status: int | None = None
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": self.user_agent,
+            }
+            if range_requested:
+                headers["Range"] = f"bytes={len(downloaded_bytes)}-"
+                headers["Accept-Encoding"] = "identity"
             request = Request(
                 url,
-                headers={
-                    "Accept": "application/json",
-                    "User-Agent": self.user_agent,
-                },
+                headers=headers,
                 method="GET",
             )
 
@@ -76,6 +103,8 @@ class JsonHttpClient:
                     status = getattr(response, "status", None)
                     if status is None and hasattr(response, "getcode"):
                         status = response.getcode()
+                    if status is not None:
+                        response_status = int(status)
                     if status is not None and not 200 <= int(status) < 300:
                         error = StockProviderError(
                             f"HTTP status {status} returned by {url}"
@@ -92,8 +121,31 @@ class JsonHttpClient:
                         )
                     else:
                         payload_bytes = response.read()
-                        payload_text = payload_bytes.decode("utf-8-sig")
-                        return json.loads(payload_text)
+                        if range_requested and response_status == 206:
+                            payload_bytes = downloaded_bytes + payload_bytes
+                            total_length = _content_range_total(response)
+                            if (
+                                total_length is not None
+                                and len(payload_bytes) < total_length
+                            ):
+                                downloaded_bytes = payload_bytes
+                                last_error = StockProviderError(
+                                    "HTTP range response ended before the full "
+                                    "response body was received"
+                                )
+                                logger.warning(
+                                    "HTTP attempt %s/%s received only %s/%s "
+                                    "bytes for %s; resuming",
+                                    attempt,
+                                    self.max_attempts,
+                                    len(payload_bytes),
+                                    total_length,
+                                    url,
+                                )
+                                payload_bytes = b""
+                        if payload_bytes:
+                            payload_text = payload_bytes.decode("utf-8-sig")
+                            return json.loads(payload_text)
             except StockProviderError:
                 raise
             except HTTPError as exc:
@@ -111,7 +163,41 @@ class JsonHttpClient:
                     url,
                     exc.code,
                 )
-            except (URLError, TimeoutError, OSError) as exc:
+            except IncompleteRead as exc:
+                last_error = exc
+                partial = getattr(exc, "partial", b"")
+                if partial:
+                    if range_requested and response_status == 206:
+                        downloaded_bytes += partial
+                    elif range_requested:
+                        # The server ignored Range and sent a fresh response.
+                        # Keep its partial prefix and try the range request again.
+                        downloaded_bytes = partial
+                    else:
+                        downloaded_bytes = partial
+                    logger.warning(
+                        "HTTP attempt %s/%s received an incomplete response "
+                        "for %s; resuming at byte %s: %s",
+                        attempt,
+                        self.max_attempts,
+                        url,
+                        len(downloaded_bytes),
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "HTTP attempt %s/%s failed for %s: %s",
+                        attempt,
+                        self.max_attempts,
+                        url,
+                        exc,
+                    )
+            except (
+                RemoteDisconnected,
+                URLError,
+                TimeoutError,
+                OSError,
+            ) as exc:
                 last_error = exc
                 logger.warning(
                     "HTTP attempt %s/%s failed for %s: %s",
@@ -196,12 +282,18 @@ class TextHttpClient:
         content_type: str | None = None,
     ) -> str:
         last_error: Exception | None = None
+        downloaded_bytes = b""
 
         for attempt in range(1, self.max_attempts + 1):
+            range_requested = method == "GET" and bool(downloaded_bytes)
+            response_status: int | None = None
             headers = {
                 "Accept": "text/html,application/xhtml+xml",
                 "User-Agent": self.user_agent,
             }
+            if range_requested:
+                headers["Range"] = f"bytes={len(downloaded_bytes)}-"
+                headers["Accept-Encoding"] = "identity"
             if content_type:
                 headers["Content-Type"] = content_type
             request = Request(
@@ -217,6 +309,8 @@ class TextHttpClient:
                     status = getattr(response, "status", None)
                     if status is None and hasattr(response, "getcode"):
                         status = response.getcode()
+                    if status is not None:
+                        response_status = int(status)
                     if status is not None and not 200 <= int(status) < 300:
                         error = StockProviderError(
                             f"HTTP status {status} returned by {url}"
@@ -232,8 +326,32 @@ class TextHttpClient:
                             status,
                         )
                     else:
-                        payload = response.read().decode("utf-8-sig")
-                        return payload
+                        payload_bytes = response.read()
+                        response_complete = True
+                        if range_requested and response_status == 206:
+                            payload_bytes = downloaded_bytes + payload_bytes
+                            total_length = _content_range_total(response)
+                            if (
+                                total_length is not None
+                                and len(payload_bytes) < total_length
+                            ):
+                                downloaded_bytes = payload_bytes
+                                last_error = StockProviderError(
+                                    "HTTP range response ended before the full "
+                                    "response body was received"
+                                )
+                                response_complete = False
+                                logger.warning(
+                                    "HTTP attempt %s/%s received only %s/%s "
+                                    "bytes for %s; resuming",
+                                    attempt,
+                                    self.max_attempts,
+                                    len(payload_bytes),
+                                    total_length,
+                                    url,
+                                )
+                        if response_complete:
+                            return payload_bytes.decode("utf-8-sig")
             except StockProviderError:
                 raise
             except HTTPError as exc:
@@ -251,7 +369,39 @@ class TextHttpClient:
                     url,
                     exc.code,
                 )
-            except (URLError, TimeoutError, OSError) as exc:
+            except IncompleteRead as exc:
+                last_error = exc
+                partial = getattr(exc, "partial", b"")
+                if method == "GET" and partial:
+                    if range_requested and response_status == 206:
+                        downloaded_bytes += partial
+                    else:
+                        # The first request, or a server that ignored Range,
+                        # returned a fresh response prefix.
+                        downloaded_bytes = partial
+                    logger.warning(
+                        "HTTP attempt %s/%s received an incomplete response "
+                        "for %s; resuming at byte %s: %s",
+                        attempt,
+                        self.max_attempts,
+                        url,
+                        len(downloaded_bytes),
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "HTTP attempt %s/%s failed for %s: %s",
+                        attempt,
+                        self.max_attempts,
+                        url,
+                        exc,
+                    )
+            except (
+                RemoteDisconnected,
+                URLError,
+                TimeoutError,
+                OSError,
+            ) as exc:
                 last_error = exc
                 logger.warning(
                     "HTTP attempt %s/%s failed for %s: %s",

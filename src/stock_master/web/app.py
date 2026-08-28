@@ -1,4 +1,4 @@
-"""FastAPI application factory for the read-only stock Web platform."""
+"""FastAPI application factory for the stock Web platform."""
 
 from __future__ import annotations
 
@@ -23,17 +23,18 @@ from stock_master.repositories import (
 from .errors import WebError, error_payload
 from .routes import api, pages
 from .services import StockQueryService
+from .sync import SyncJobManager, build_all_data_sync_service
 
 _WEB_DIR = Path(__file__).resolve().parent
 
 
 def create_app(db_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
-    """Build a Web app whose repositories are all opened read-only."""
+    """Build a Web app with read-only queries and an explicit sync action."""
 
     app = FastAPI(
         title="Taiwan Stock Data",
         version="1.0.0",
-        description="Read-only dashboard for Taiwan stock history and distributions.",
+        description="Dashboard for Taiwan stock history, distributions, and explicit sync jobs.",
     )
     app.state.db_path = Path(db_path)
     app.state.templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
@@ -44,6 +45,12 @@ def create_app(db_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
         margin_estimate_repository=MarginEstimateRepository(db_path, readonly=True),
         tdcc_repository=TDCCDistributionRepository(db_path, readonly=True),
     )
+    all_data_sync = build_all_data_sync_service(db_path)
+    app.state.sync_jobs = SyncJobManager(
+        all_data_sync.sync,
+        all_data_sync.STEP_DEFINITIONS,
+    )
+    app.router.on_shutdown.append(app.state.sync_jobs.shutdown)
     app.mount(
         "/static",
         StaticFiles(directory=str(_WEB_DIR / "static")),

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
+from threading import Event
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +23,67 @@ def test_health_and_pages_render(web_client):
     assert detail.status_code == 200
     assert "台積電" in detail.text
     assert "融資維持率估算" in detail.text
+    assert "tdcc-high-chart" in detail.text
+    assert "tdcc-low-chart" in detail.text
+    assert "14 級距以上持股比例總和" in detail.text
+    assert "6 級距以下持股比例總和" in detail.text
+    home = web_client.get("/")
+    assert "同步所有資料" in home.text
+    assert "data-sync-all" in home.text
+
+
+def test_all_data_sync_api_runs_a_background_job(web_client, monkeypatch):
+    manager = web_client.app.state.sync_jobs
+
+    def fake_runner(*, progress):
+        progress("price-latest", "running")
+        progress("price-latest", "completed")
+        return {
+            "sync_date": "2026-08-12",
+            "start_date": "2026-08-12",
+            "end_date": "2026-08-12",
+            "completed_steps": ["price-latest"],
+            "skipped_steps": [],
+        }
+
+    monkeypatch.setattr(manager, "_runner", fake_runner)
+    started = web_client.post("/api/v1/sync/all")
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+
+    for _ in range(30):
+        status = web_client.get(f"/api/v1/sync/all/{job_id}")
+        if status.json()["status"] == "completed":
+            break
+        time.sleep(0.01)
+
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["status"] == "completed"
+    assert payload["result"]["completed_steps"] == ["price-latest"]
+    assert payload["steps"][0]["status"] == "completed"
+
+
+def test_all_data_sync_api_rejects_a_second_running_job(web_client, monkeypatch):
+    manager = web_client.app.state.sync_jobs
+    started_event = Event()
+    release_event = Event()
+
+    def blocking_runner(*, progress):
+        started_event.set()
+        release_event.wait(timeout=2)
+        return {"completed_steps": []}
+
+    monkeypatch.setattr(manager, "_runner", blocking_runner)
+    first = web_client.post("/api/v1/sync/all")
+    assert first.status_code == 202
+    assert started_event.wait(timeout=1)
+
+    second = web_client.post("/api/v1/sync/all")
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "SYNC_IN_PROGRESS"
+
+    release_event.set()
 
 
 def test_read_only_web_requests_do_not_change_database(web_client, web_db: Path):
@@ -78,4 +141,3 @@ def test_stock_without_optional_history_still_has_an_overview(web_client):
     assert payload["margin"] is None
     assert payload["margin_estimate"] is None
     assert payload["tdcc"] is None
-

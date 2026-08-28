@@ -34,7 +34,11 @@
 
   <section class="container section-block detail-section" data-section="tdcc">
     <div class="section-heading"><div><p class="eyebrow">OWNERSHIP DISTRIBUTION</p><h2>TDCC 股權分散</h2></div><span class="section-note" data-tdcc-date>每週資料</span></div>
-    <div class="tdcc-layout"><div class="chart-card"><div class="chart-head"><div><span class="chart-title">最新持股級距</span><span class="chart-subtitle">股東人數與持股比例</span></div><span class="legend-chip tdcc-chip">TDCC</span></div><div class="chart-wrap short-chart"><canvas id="tdcc-chart" aria-label="TDCC 持股分散圖"></canvas></div></div><div class="table-shell mini-table-shell" data-tdcc-table></div></div>
+    <div class="tdcc-charts" data-tdcc-charts>
+      <div class="chart-card"><div class="chart-head"><div><span class="chart-title">14 級距以上持股比例總和</span><span class="chart-subtitle">長條：持股比例總和　折線：當日收盤價</span></div><span class="legend-chip tdcc-chip">14+ · CLOSE</span></div><div class="chart-wrap short-chart"><canvas id="tdcc-high-chart" aria-label="14級距以上持股比例總和與當日收盤價歷史圖"></canvas></div></div>
+      <div class="chart-card"><div class="chart-head"><div><span class="chart-title">6 級距以下持股比例總和</span><span class="chart-subtitle">長條：持股比例總和　折線：當日收盤價</span></div><span class="legend-chip tdcc-chip">1–6 · CLOSE</span></div><div class="chart-wrap short-chart"><canvas id="tdcc-low-chart" aria-label="6級距以下持股比例總和與當日收盤價歷史圖"></canvas></div></div>
+    </div>
+    <div class="table-shell mini-table-shell" data-tdcc-table></div>
   </section>
 </div>
 {% endblock %}

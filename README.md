@@ -1,6 +1,8 @@
 # Taiwan Stock Master
 
-Taiwan Stock Master 會從臺灣證券交易所（TWSE）與證券櫃檯買賣中心（TPEx）的官方 OpenAPI，同步目前有效的上市／上櫃普通股票到 SQLite。
+Taiwan Stock Master 會從臺灣證券交易所（TWSE）與證券櫃檯買賣中心（TPEx）的官方
+OpenAPI 取得資料。Windows 本機桌面同步介面會直接將股票主檔、每日成交行情與
+TDCC 資料寫入 Supabase BillDB；原有 SQLite 命令列流程保留給既有本機查詢功能。
 
 資料表只包含：
 
@@ -21,10 +23,87 @@ ETF、其他有價證券與「合計」列都不會寫入 `tdcc_distributions`�
 
     python -m pip install -e ".[dev]"
 
-同步核心使用 Python 標準函式庫；Web 查詢平台額外使用 FastAPI、Uvicorn 與
-Jinja2，測試工具使用 pytest 與 httpx。
+官方資料與 SQLite 同步核心使用 Python 標準函式庫；Supabase 匯出使用固定版本的
+Supabase Python client。Web 查詢平台額外使用 FastAPI、Uvicorn 與 Jinja2，測試
+工具使用 pytest 與 httpx。
 
-## 同步
+如果 macOS 將 repository 放在外接或特殊掛載磁碟（例如 `/Volumes/D`），而 pip
+出現 `UnicodeDecodeError` 且 traceback 指向 `importlib.metadata`，通常是磁碟產生
+的 `._*.dist-info` AppleDouble 側錄檔被 pip 誤認成套件 metadata。請先啟用專案
+環境並清除這些側錄檔，再安裝：
+
+    source .venv/bin/activate
+    find "$VIRTUAL_ENV/lib/python3.12/site-packages" -name '._*' -exec rm -rf -- {} +
+    PIP_DISABLE_PIP_VERSION_CHECK=1 python -m pip install --upgrade setuptools wheel
+    PIP_DISABLE_PIP_VERSION_CHECK=1 python -m pip install -e ".[dev]" --no-build-isolation
+
+之後執行專案時也請使用已啟用的 `.venv`，或直接使用
+`.venv/bin/python`，避免誤用系統或 Conda 的 `python`。
+
+## Windows 本機同步介面
+
+如果要在 Windows 直接操作同步，不需要啟動 Web 介面。請使用包含 Tkinter 的
+Python 安裝程式（python.org 的 Windows installer 預設包含），安裝專案後執行：
+
+    python -m pip install -e ".[dev]"
+
+在專案根目錄建立 `.env`（可複製 [`.env.example`](.env.example)），填入 BillDB 的
+後端 Secret key。`.env` 已加入 `.gitignore`，不會提交到 Git：
+
+    SUPABASE_SECRET_KEY=sb_secret_...
+    python -m stock_master desktop
+
+如果使用舊版 Supabase service-role key，`.env` 可以改成：
+
+    SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+需要切換 Supabase project 時：
+
+    python -m stock_master desktop --supabase-url "https://你的專案.supabase.co"
+
+視窗提供四個操作：股票主檔、每日成交行情（可選日期區間，預設最近一日）、TDCC 最新一期，以及
+指定年份的 TDCC 歷史資料。所有資料直接寫入 Supabase BillDB 的 `stocks`、
+`price_history` 與 `tdcc_distributions`，不會寫入 SQLite；請先按「股票主檔」，
+再按每日成交行情或 TDCC。年度 TDCC 同步可能需要較長時間，視窗會顯示完成筆數
+或錯誤原因。
+
+TDCC 每週更新一次；「TDCC 最新一期」會先比較 Supabase 中已存在的最大
+`data_date`，若官方資料日期沒有更新就略過，不重複同步同一週資料。年度同步則依
+TDCC 官方頁面提供的每週資料日期查詢，從最新週開始，每 50 支股票完成後立即批次
+寫入 Supabase。`tdcc_sync_checkpoints` 會記錄成功與官方明確回覆查無資料的
+`data_date + stock_code`；中斷後重新執行只補未完成項目。若 TDCC 在雙 worker
+模式下發生連線失敗，該批會改用單 worker 與較長間隔重試，來源穩定後再恢復。
+若個別結果頁缺少顯示日期，程式會先核對表單選定日期；遇到疑似 Session／Token
+失效的不完整頁面時，會更新 Session 後只重試該股票與該週。
+
+同步執行期間，視窗的「同步狀態」會即時顯示目前來源、資料日期、TDCC 股票進度與
+Supabase 批次寫入進度；同步完成或失敗後會保留最後結果。
+
+對應的 Supabase schema 位於
+[`supabase/schema/market_data.sql`](supabase/schema/market_data.sql)、
+[`supabase/schema/tdcc_distributions.sql`](supabase/schema/tdcc_distributions.sql) 與
+[`supabase/schema/tdcc_sync_checkpoints.sql`](supabase/schema/tdcc_sync_checkpoints.sql)。
+
+## Node.js 手機版籌碼網站
+
+[`mobile-web`](mobile-web) 是獨立的 React＋Node.js 手機版網站，可依股票代碼或
+名稱查詢大戶（TDCC 第 15 級）與散戶（第 1～6 級）持股比例、張數及戶數，也可
+篩選最近 2～12 週大戶持股比例每週持續增加的股票，再點進個股查看趨勢與明細。
+
+網站沿用專案根目錄 `.env` 的 `SUPABASE_SECRET_KEY`，金鑰只存在 Node.js 後端，
+不會送到瀏覽器。第一次使用先安裝套件並啟動：
+
+    cd mobile-web
+    npm install
+    npm run dev
+
+瀏覽器開啟 `http://localhost:3000`。完整執行與正式模式說明請見
+[`mobile-web/README.md`](mobile-web/README.md)。資料庫查詢函式定義於
+[`supabase/schema/tdcc_mobile_web.sql`](supabase/schema/tdcc_mobile_web.sql)。
+
+安裝完成後也可以直接執行 `stock-master-desktop` 開啟同一個介面。
+
+## 舊版 SQLite 命令列同步（相容保留）
 
     python -m stock_master sync
 
@@ -63,6 +142,92 @@ TDCC 資料會保留歷史日期，唯一鍵為 `data_date + stock_code + holdin
 
 此功能會依 TDCC 歷史頁實際提供的每週日期選項決定資料日期，不會自行猜測週末或
 假日。查詢頁回傳的「差異數調整」與「合計」列不會寫入資料庫；既有資料不會被刪除。
+
+### 同步今年 TDCC 資料到 Supabase BillDB
+
+BillDB 的 `public.tdcc_distributions` schema 定義在
+[`supabase/schema/tdcc_distributions.sql`](supabase/schema/tdcc_distributions.sql)。
+table 使用 `data_date + stock_code + holding_level` 複合主鍵、限制級距為 1～15，
+並啟用 RLS；`anon` 與 `authenticated` 沒有權限，只有後端 `service_role` 可同步。
+
+先從 Supabase BillDB 的 API Keys 頁取得後端 Secret key，放在環境變數中。請勿將
+key 寫入程式、命令列參數或提交到 Git：
+
+    export SUPABASE_SECRET_KEY='sb_secret_...'
+
+舊版 BillDB key 也可使用：
+
+    export SUPABASE_SERVICE_ROLE_KEY='eyJ...'
+
+先驗證今年 SQLite 的資料筆數與內容，不連線 Supabase：
+
+    python -m stock_master tdcc-supabase-sync --dry-run
+
+確認後同步今年資料到 BillDB：
+
+    python -m stock_master tdcc-supabase-sync
+
+也可以指定年度與批次大小：
+
+    python -m stock_master tdcc-supabase-sync \
+      --year 2026 \
+      --batch-size 500
+
+程式預設使用 BillDB 專案 URL；若要改用其他 Supabase project，可設定
+`SUPABASE_URL` 或傳入 `--supabase-url`。同步來源是本機 SQLite
+`tdcc_distributions`，只 upsert 指定年度且級距為 1～15 的資料；重複執行不會建立
+重複列。
+
+### 直接從 TDCC 官方資料同步到 Supabase
+
+如果不想先同步 SQLite，可直接執行專案根目錄的
+[`sync_tdcc_to_supabase.py`](sync_tdcc_to_supabase.py)。這個程式完全獨立於
+`stock_master` 的內部服務。未指定年度時，會抓取 TDCC 官方 OpenAPI 最新回應；
+指定 `--year` 時，會先取得官方歷史頁今年實際提供的每週日期，再逐檔查詢全年
+資料。兩種模式都只保留 1～15 級距，並以 `data_date + stock_code + holding_level`
+批次 upsert 到 BillDB 的 `public.tdcc_distributions`。預設會讀取
+`data/stocks.db` 的 `stocks` table，只同步上市／上櫃普通股票；因此 ETF、權證、
+債券等 TDCC 其他證券不會送到 Supabase。若尚未建立股票主檔，先執行：
+
+    .venv/bin/python -m stock_master sync
+
+先做唯讀驗證：
+
+    .venv/bin/python sync_tdcc_to_supabase.py --dry-run --year 2026
+
+確認筆數後執行實際同步：
+
+    export SUPABASE_SECRET_KEY='sb_secret_...'
+    .venv/bin/python sync_tdcc_to_supabase.py --year 2026
+
+`--year 2026` 會同步 2026 年所有 TDCC 官方歷史頁提供的週資料，不是只同步
+最新的 8/21。年度全市場資料量很大，程式會分批處理；可以用較保守的參數：
+
+    .venv/bin/python sync_tdcc_to_supabase.py \
+      --year 2026 \
+      --workers 2 \
+      --request-delay 0.2 \
+      --chunk-size 100
+
+正式跑全市場前，也可以先測試一檔股票：
+
+    .venv/bin/python sync_tdcc_to_supabase.py \
+      --year 2026 \
+      --stock-code 2330 \
+      --workers 1 \
+      --request-delay 0 \
+      --dry-run
+
+只執行最新官方資料、不查歷史頁時，不要指定年度：
+
+    .venv/bin/python sync_tdcc_to_supabase.py
+
+若要刻意包含所有 TDCC 證券，才使用 `--all-securities`；一般股票同步不需要這個
+參數。SQLite 不在預設位置時，可用 `--db /path/to/stocks.db` 指定。
+
+請只使用 Supabase 後端 Secret key（或舊版 `SUPABASE_SERVICE_ROLE_KEY`），不要把
+key 寫在程式、命令列或 Git。程式會直接連線 Supabase，不會讀取 SQLite，也不會
+因為直接執行而觸發 `stock_master` 的相對匯入。
 
 ## 融資融券歷史資料
 
@@ -189,7 +354,7 @@ TWSE 的歷史介面是全市場查詢；TPEx 歷史介面是逐股票、逐月�
 
 ## Web 查詢平台
 
-先完成至少一次 stock master 同步，再啟動唯讀 Web 服務：
+先完成至少一次 stock master 同步，再啟動 Web 服務：
 
     python -m stock_master web
 
@@ -200,9 +365,10 @@ TWSE 的歷史介面是全市場查詢；TPEx 歷史介面是逐股票、逐月�
       --port 8000 \
       --db /tmp/taiwan-stocks.db
 
-Web 層只透過短生命週期的 SQLite read-only connection 查詢既有資料，不會呼叫
-TWSE、TPEx 或 TDCC endpoint，也不會在瀏覽頁面時執行同步或寫入資料庫。API 以
-`/api/v1` 為前綴，主要端點如下：
+一般 Web 查詢只透過短生命週期的 SQLite read-only connection 讀取既有資料，不會
+呼叫 TWSE、TPEx 或 TDCC endpoint。首頁的「同步所有資料」按鈕會啟動背景工作，只依序
+同步最新成交行情、最新融資融券、最新 TDCC（沒有新資料時略過）與最新融資維持率估算；
+歷史資料仍請使用前述個別 history-sync 指令。API 以 `/api/v1` 為前綴，主要端點如下：
 
 * `GET /api/v1/health`
 * `GET /api/v1/stocks?q=2330&limit=20&offset=0`
@@ -214,10 +380,15 @@ TWSE、TPEx 或 TDCC endpoint，也不會在瀏覽頁面時執行同步或寫入
 * `GET /api/v1/stocks/2330/margin-estimates/latest`
 * `GET /api/v1/stocks/2330/tdcc`
 * `GET /api/v1/stocks/2330/tdcc/latest`
+* `POST /api/v1/sync/all`
+* `GET /api/v1/sync/all/{job_id}`
 
 歷史端點支援 `from`、`to`、`limit` 與 `offset`；日期為 ISO `YYYY-MM-DD`，
 `limit` 最大為 1,000。錯誤統一回傳 `{"error": {"code": "...", "message": "..."}}`。
 行情頁的「市場成交均價」明確使用 `成交金額 ÷ 成交股數`，不是融資買進均價。
+TDCC 區塊會將歷史資料分成兩張混合圖：14 級距以上的持股比例總和，以及 6 級距
+以下的持股比例總和以長條呈現，兩張圖都會疊加同一資料日期的收盤價折線；下方另保留
+最新日期的級距明細。
 維持率區塊的所有數值都標示為「估算」，僅供研究與風險提示，不代表券商實際維持率、
 追繳線或個人帳戶數值。
 

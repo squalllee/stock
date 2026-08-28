@@ -5,16 +5,50 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
+from fastapi import status
 
 from stock_master.config import DEFAULT_MARGIN_MODEL_VERSION
 
 from ..errors import WebError
+from ..sync import SyncAlreadyRunning, SyncJobNotFound
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
 def _service(request: Request) -> Any:
     return request.app.state.query_service
+
+
+def _sync_jobs(request: Request) -> Any:
+    return request.app.state.sync_jobs
+
+
+@router.post("/sync/all", status_code=status.HTTP_202_ACCEPTED)
+def start_all_data_sync(request: Request) -> dict[str, Any]:
+    """Start the complete data synchronization as a background job."""
+
+    try:
+        return _sync_jobs(request).start()
+    except SyncAlreadyRunning as exc:
+        raise WebError(
+            "SYNC_IN_PROGRESS",
+            "All data synchronization is already running.",
+            409,
+        ) from exc
+
+
+@router.get("/sync/all/{job_id}")
+def all_data_sync_status(request: Request, job_id: str) -> dict[str, Any]:
+    """Return progress for one complete data synchronization job."""
+
+    try:
+        return _sync_jobs(request).get(job_id)
+    except SyncJobNotFound as exc:
+        raise WebError(
+            "SYNC_JOB_NOT_FOUND",
+            "The synchronization job was not found.",
+            404,
+        ) from exc
 
 
 @router.get("/health")

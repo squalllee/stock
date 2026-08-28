@@ -3,9 +3,11 @@
 
   const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 });
   const integerFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 0 });
+  const charts = Object.create(null);
 
   document.addEventListener("DOMContentLoaded", function () {
     initSearch();
+    initHomeSync();
     initDetailPage();
   });
 
@@ -41,6 +43,88 @@
     });
   }
 
+  function initHomeSync() {
+    const button = document.querySelector("[data-sync-all]");
+    const status = document.querySelector("[data-sync-status]");
+    if (!button || !status) return;
+
+    button.addEventListener("click", async function () {
+      button.disabled = true;
+      button.textContent = "同步工作啟動中…";
+      try {
+        const job = await fetchJSON("/api/v1/sync/all", { method: "POST" });
+        renderSyncStatus(job);
+        pollSyncJob(job.job_id, button, status);
+      } catch (error) {
+        renderSyncFailure(status, "無法啟動同步", error);
+        button.disabled = false;
+        button.textContent = "↻　同步所有資料";
+      }
+    });
+  }
+
+  async function pollSyncJob(jobId, button, status) {
+    let delay = 700;
+    while (true) {
+      await wait(delay);
+      try {
+        const job = await fetchJSON("/api/v1/sync/all/" + encodeURIComponent(jobId));
+        renderSyncStatus(job);
+        if (job.status === "completed" || job.status === "failed") {
+          button.disabled = false;
+          button.textContent = "↻　同步所有資料";
+          if (job.status === "completed") {
+            window.setTimeout(function () { window.location.reload(); }, 800);
+          }
+          return;
+        }
+      } catch (error) {
+        renderSyncFailure(status, "同步狀態讀取失敗", error);
+        button.disabled = false;
+        button.textContent = "↻　同步所有資料";
+        return;
+      }
+      delay = Math.min(Math.round(delay * 1.35), 5000);
+    }
+  }
+
+  function renderSyncStatus(data) {
+    const status = document.querySelector("[data-sync-status]");
+    if (!status) return;
+    const message = status.querySelector("[data-sync-message]");
+    const detail = status.querySelector("[data-sync-detail]");
+    const steps = status.querySelector("[data-sync-steps]");
+    status.hidden = false;
+    status.dataset.state = data.status || "queued";
+    if (message) message.textContent = data.message || "同步工作進行中";
+    if (detail) {
+      const result = data.result || {};
+      detail.textContent = data.status === "completed"
+        ? "同步日期：" + (result.sync_date || result.end_date || "—")
+        : data.error || "只同步各資料源最新資料。";
+    }
+    if (steps) {
+      steps.innerHTML = (data.steps || []).map(function (step) {
+        const state = step.status || "pending";
+        const mark = state === "completed" ? "✓" : state === "failed" ? "!" : state === "running" ? "…" : state === "skipped" ? "—" : "○";
+        return '<li class="sync-step ' + escapeHtml(state) + '"><span class="sync-step-mark">' + mark + '</span><span>' + escapeHtml(step.label) + '</span></li>';
+      }).join("");
+    }
+  }
+
+  function renderSyncFailure(status, message, error) {
+    status.hidden = false;
+    status.dataset.state = "failed";
+    const messageElement = status.querySelector("[data-sync-message]");
+    const detail = status.querySelector("[data-sync-detail]");
+    if (messageElement) messageElement.textContent = message;
+    if (detail) detail.textContent = messageFrom(error);
+  }
+
+  function wait(milliseconds) {
+    return new Promise(function (resolve) { window.setTimeout(resolve, milliseconds); });
+  }
+
   async function initDetailPage() {
     const page = document.querySelector("[data-stock-code]");
     if (!page) return;
@@ -53,16 +137,17 @@
 
     async function loadHistory(days) {
       const query = historyQuery(days);
+      const tdccQuery = days === "default" ? "?limit=1000" : query;
       const results = await Promise.allSettled([
         fetchJSON(base + "/prices" + query),
         fetchJSON(base + "/margin" + query),
         fetchJSON(base + "/margin-estimates" + query),
-        fetchJSON(base + "/tdcc" + query)
+        fetchJSON(base + "/tdcc" + tdccQuery)
       ]);
       fulfilled(results[0]) ? renderPrices(results[0].value) : renderSectionError("prices", results[0].reason);
       fulfilled(results[1]) ? renderMargin(results[1].value) : renderSectionError("margin", results[1].reason);
       fulfilled(results[2]) ? renderEstimates(results[2].value) : renderSectionError("estimates", results[2].reason);
-      fulfilled(results[3]) ? renderTdcc(results[3].value) : renderSectionError("tdcc", results[3].reason);
+      fulfilled(results[3]) ? renderTdcc(results[3].value, fulfilled(results[0]) ? results[0].value : null) : renderSectionError("tdcc", results[3].reason);
     }
 
     await loadHistory("default");
@@ -188,16 +273,31 @@
     ].join("");
   }
 
-  function renderTdcc(data) {
+  function renderTdcc(data, priceData) {
     const items = data.items || [];
     if (!items.length) {
       renderEmpty("[data-tdcc-table]", "尚無 TDCC 股權分散資料");
+      setText("[data-tdcc-date]", "尚無資料");
       return;
     }
-    const latestDate = items[items.length - 1].data_date;
-    const latest = items.filter(function (item) { return item.data_date === latestDate; });
+    const dates = Array.from(new Set(items.map(function (item) { return item.data_date; }))).sort();
+    const summaries = dates.map(function (dataDate) {
+      return items.filter(function (item) { return item.data_date === dataDate; }).reduce(function (summary, item) {
+        const level = Number.parseInt(item.holding_level, 10);
+        const ratio = Number(item.holding_ratio) || 0;
+        if (level >= 14) summary.high += ratio;
+        if (level <= 6) summary.low += ratio;
+        return summary;
+      }, { high: 0, low: 0 });
+    });
+    const closeByDate = new Map(((priceData && priceData.items) || []).map(function (item) { return [item.trade_date, item.close]; }));
+    const closePrices = dates.map(function (dataDate) { return closeByDate.has(dataDate) ? closeByDate.get(dataDate) : null; });
+    const makeCloseDataset = function () { return { type: "line", label: "當日收盤價", unit: "price", data: closePrices, borderColor: "#172b3a", backgroundColor: "rgba(23,43,58,.08)", borderWidth: 3, pointRadius: 4, pointHoverRadius: 6, pointBackgroundColor: "#ffffff", pointBorderColor: "#172b3a", pointBorderWidth: 2, tension: .24, fill: false, yAxisID: "price", order: 1 }; };
+    makeMixedBarLineChart("tdcc-high-chart", dates, { label: "14 級距以上持股比例總和", unit: "ratio", data: summaries.map(function (item) { return item.high; }), backgroundColor: "rgba(227,110,86,.52)", borderColor: "#e36e56", borderWidth: 1, borderRadius: 5, order: 2 }, makeCloseDataset());
+    makeMixedBarLineChart("tdcc-low-chart", dates, { label: "6 級距以下持股比例總和", unit: "ratio", data: summaries.map(function (item) { return item.low; }), backgroundColor: "rgba(8,127,120,.52)", borderColor: "#087f78", borderWidth: 1, borderRadius: 5, order: 2 }, makeCloseDataset());
+    const latestDate = dates[dates.length - 1];
+    const latest = items.filter(function (item) { return item.data_date === latestDate; }).sort(function (left, right) { return Number.parseInt(left.holding_level, 10) - Number.parseInt(right.holding_level, 10); });
     setText("[data-tdcc-date]", latestDate + " · " + latest.length + " 個級距");
-    makeBarChart("tdcc-chart", latest.map(function (item) { return item.holding_level; }), [{ label: "持股比例 %", data: latest.map(function (item) { return item.holding_ratio; }), backgroundColor: "#f2c85b", borderRadius: 5 }]);
     const rows = latest.map(function (item) { return "<tr><td>" + escapeHtml(item.holding_level) + "</td><td>" + displayNumber(item.shareholder_count, "volume") + "</td><td>" + displayNumber(item.share_count, "volume") + "</td><td>" + displayNumber(item.holding_ratio, "ratio") + "</td></tr>"; }).join("");
     document.querySelector("[data-tdcc-table]").innerHTML = tableHtml(["持股級距", "股東人數", "持股數", "持股比例"], rows);
   }
@@ -205,7 +305,7 @@
   function renderSectionError(section, error) {
     const target = document.querySelector('[data-section="' + section + '"]');
     if (!target) return;
-    const content = target.querySelector(".chart-card, [data-estimate-cards], .tdcc-layout");
+    const content = target.querySelector(".chart-card, [data-estimate-cards], [data-tdcc-charts]");
     if (content) content.outerHTML = emptyHtml(messageFrom(error));
   }
 
@@ -226,18 +326,46 @@
     if (!window.Chart) return;
     const canvas = document.getElementById(id);
     if (!canvas) return;
-    new window.Chart(canvas, { type: "line", data: { labels: labels, datasets: datasets.map(function (dataset) { return Object.assign({ fill: true, tension: .28, pointRadius: 0, borderWidth: 2 }, dataset); }) }, options: chartOptions() });
+    destroyChart(id);
+    charts[id] = new window.Chart(canvas, { type: "line", data: { labels: labels, datasets: datasets.map(function (dataset) { return Object.assign({ fill: true, tension: .28, pointRadius: 0, borderWidth: 2 }, dataset); }) }, options: chartOptions() });
   }
 
   function makeBarChart(id, labels, datasets) {
     if (!window.Chart) return;
     const canvas = document.getElementById(id);
     if (!canvas) return;
-    new window.Chart(canvas, { type: "bar", data: { labels: labels, datasets: datasets }, options: chartOptions() });
+    destroyChart(id);
+    charts[id] = new window.Chart(canvas, { type: "bar", data: { labels: labels, datasets: datasets }, options: chartOptions() });
+  }
+
+  function makeMixedBarLineChart(id, labels, barDataset, lineDataset) {
+    if (!window.Chart) return;
+    const canvas = document.getElementById(id);
+    if (!canvas) return;
+    destroyChart(id);
+    charts[id] = new window.Chart(canvas, {
+      type: "bar",
+      data: { labels: labels, datasets: [Object.assign({ type: "bar", order: 2 }, barDataset), Object.assign({ type: "line", order: 1 }, lineDataset)] },
+      options: mixedChartOptions()
+    });
+  }
+
+  function destroyChart(id) {
+    if (charts[id]) {
+      charts[id].destroy();
+      delete charts[id];
+    }
   }
 
   function chartOptions() {
-    return { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: "index" }, plugins: { legend: { display: true, labels: { usePointStyle: true, boxWidth: 7, color: "#6f7f87", font: { size: 11 } } }, tooltip: { callbacks: { label: function (context) { return " " + context.dataset.label + ": " + displayNumber(context.raw, "price"); } } } }, scales: { x: { grid: { display: false }, ticks: { color: "#8b999d", maxTicksLimit: 7, font: { size: 10 } } }, y: { grid: { color: "#edf1f1" }, ticks: { color: "#8b999d", font: { size: 10 } } } } };
+    return { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: "index" }, plugins: { legend: { display: true, labels: { usePointStyle: true, boxWidth: 7, color: "#6f7f87", font: { size: 11 } } }, tooltip: { callbacks: { label: function (context) { return " " + context.dataset.label + ": " + displayNumber(context.raw, context.dataset.unit || "price"); } } } }, scales: { x: { grid: { display: false }, ticks: { color: "#8b999d", maxTicksLimit: 7, font: { size: 10 } } }, y: { grid: { color: "#edf1f1" }, ticks: { color: "#8b999d", font: { size: 10 } } } } };
+  }
+
+  function mixedChartOptions() {
+    const options = chartOptions();
+    options.scales.y.title = { display: true, text: "持股比例 (%)", color: "#6f7f87", font: { size: 10 } };
+    options.scales.price = { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "收盤價", color: "#6f7f87", font: { size: 10 } }, ticks: { color: "#172b3a", font: { size: 10 } } };
+    return options;
   }
 
   function tableHtml(headers, rows) { return '<table class="data-table"><thead><tr>' + headers.map(function (header) { return "<th>" + header + "</th>"; }).join("") + "</tr></thead><tbody>" + rows + "</tbody></table>"; }
@@ -248,6 +376,6 @@
   function riskClass(value) { return value >= 166 ? "risk-normal" : value >= 130 ? "risk-caution" : "risk-high"; }
   function displayNumber(value, type) { if (value === null || value === undefined || value === "") return "—"; if (type === "text") return escapeHtml(String(value)); if (type === "ratio") return numberFormat.format(Number(value)) + "%"; if (type === "volume") return integerFormat.format(Number(value)); return numberFormat.format(Number(value)); }
   function messageFrom(error) { return error && error.message ? error.message : "資料暫時無法取得"; }
-  async function fetchJSON(url) { const response = await fetch(url, { headers: { Accept: "application/json" } }); const data = await response.json(); if (!response.ok) throw data.error || { message: "資料暫時無法取得" }; return data; }
+  async function fetchJSON(url, options) { const response = await fetch(url, Object.assign({ headers: { Accept: "application/json" } }, options || {})); const data = await response.json(); if (!response.ok) throw data.error || { message: "資料暫時無法取得" }; return data; }
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g, function (character) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character]; }); }
 })();

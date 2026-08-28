@@ -129,3 +129,22 @@ def test_tdcc_sync_skips_total_record_from_fake_provider(tmp_path):
 
     assert result.skipped_total_count == 1
     assert len(repository.get_by_stock_code("2330")) == 1
+
+
+def test_tdcc_sync_persists_only_holding_levels_one_to_fifteen(tmp_path):
+    service, _, repository = make_service(
+        tmp_path,
+        [
+            record(level="14"),
+            record(level="15"),
+            record(level="16"),
+            record(level="17"),
+        ],
+    )
+
+    result = service.sync()
+
+    assert result.tdcc_count == 2
+    assert [
+        item.holding_level for item in repository.get_by_stock_code("2330")
+    ] == ["14", "15"]

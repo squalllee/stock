@@ -16,3 +16,6 @@ class StockDataValidationError(StockMasterError):
 class DatabaseError(StockMasterError):
     """SQLite could not create or update the stock master."""
 
+
+class SupabaseSyncError(StockMasterError):
+    """A Supabase synchronization could not be completed safely."""

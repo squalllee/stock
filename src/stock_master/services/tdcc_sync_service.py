@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 
+from stock_master.config import TDCC_MAX_HOLDING_LEVEL
 from stock_master.exceptions import DatabaseError, StockDataValidationError
 from stock_master.models import Stock, TDCCDistribution
 from stock_master.providers.tdcc import TDCCDistributionProvider
@@ -19,11 +20,28 @@ logger = logging.getLogger(__name__)
 
 _ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TOTAL_LEVEL_MARKERS = ("合計", "總計", "total", "grandtotal")
+_NUMERIC_LEVEL_PATTERN = re.compile(r"^\d+$")
 
 
 def _is_total_holding_level(value: str) -> bool:
     normalized = "".join(value.casefold().split())
     return any(marker.casefold() in normalized for marker in _TOTAL_LEVEL_MARKERS)
+
+
+def _is_allowed_holding_level(value: str) -> bool:
+    """Return whether a numeric TDCC level belongs to levels 1 through 15.
+
+    Some older TDCC payloads use range labels such as ``1-999`` instead of
+    the numeric level identifier. Keep those labels for backwards
+    compatibility; the current feed uses numeric identifiers, which are
+    limited to the requested 1-15 range here at the persistence boundary.
+    """
+
+    normalized = value.strip()
+    if not _NUMERIC_LEVEL_PATTERN.fullmatch(normalized):
+        return True
+    level = int(normalized)
+    return 1 <= level <= TDCC_MAX_HOLDING_LEVEL
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,10 +116,9 @@ class TDCCSyncService:
             raise StockDataValidationError(
                 "TDCC returned no distribution records; refusing to sync."
             )
-        normalized, skipped_totals = self._filter_and_validate(
+        deduplicated, skipped_totals = self.prepare_records(
             records, valid_stock_codes
         )
-        deduplicated = self._deduplicate(normalized)
         stats = self.tdcc_repository.upsert_many(deduplicated)
 
         provider_skipped_totals = getattr(
@@ -126,6 +143,19 @@ class TDCCSyncService:
             result.skipped_total_count,
         )
         return result
+
+    @classmethod
+    def prepare_records(
+        cls,
+        records: Iterable[TDCCDistribution],
+        valid_stock_codes: set[str],
+    ) -> tuple[list[TDCCDistribution], int]:
+        """Validate and deduplicate one independently persistable TDCC batch."""
+
+        normalized, skipped_totals = cls._filter_and_validate(
+            records, valid_stock_codes
+        )
+        return cls._deduplicate(normalized), skipped_totals
 
     @staticmethod
     def _stock_codes(stocks: Iterable[Stock]) -> set[str]:
@@ -179,6 +209,8 @@ class TDCCSyncService:
                 continue
             if _is_total_holding_level(record.holding_level):
                 skipped_totals += 1
+                continue
+            if not _is_allowed_holding_level(record.holding_level):
                 continue
             TDCCSyncService._validate_record(record)
             values.append(record)

@@ -105,3 +105,55 @@ def test_tpex_price_provider_ignores_date_footnote_marker():
     records = provider.fetch(date(2026, 8, 7))
 
     assert records[0].trade_date == "2026-08-07"
+
+
+def test_tpex_price_provider_latest_uses_market_wide_endpoint():
+    client = FakeJsonClient(
+        [
+            {
+                "Date": "1150824",
+                "SecuritiesCompanyCode": "3105",
+                "CompanyName": "穩懋",
+                "Close": "310.00",
+                "Open": "---",
+                "High": "315.00",
+                "Low": "300.00",
+                "Average": "310.00",
+                "TradingShares": "10000000",
+                "TransactionAmount": "3100000000",
+                "TransactionNumber": "9000",
+            },
+            {
+                "Date": "1150824",
+                "SecuritiesCompanyCode": "00679B",
+                "CompanyName": "元大美債20年",
+                "Close": "25.83",
+                "Open": "25.80",
+                "High": "25.83",
+                "Low": "25.76",
+                "Average": "25.78",
+                "TradingShares": "12414050",
+                "TransactionAmount": "320070003",
+                "TransactionNumber": "3112",
+            },
+        ]
+    )
+    provider = TPExPriceProvider(
+        client,
+        stock_codes={"3105"},
+        request_delay_seconds=0,
+    )
+
+    records = provider.fetch()
+
+    assert records[0].stock_code == "3105"
+    assert records[0].trade_date == "2026-08-24"
+    assert records[0].trade_volume == 10_000_000
+    assert records[0].trade_value == 3_100_000_000
+    assert records[0].open_price is None
+    assert records[0].market_average_price == 310.0
+    assert provider.last_trade_date == "2026-08-24"
+    assert client.urls == [
+        "https://www.tpex.org.tw/openapi/v1/"
+        "tpex_mainboard_daily_close_quotes"
+    ]

@@ -3,11 +3,10 @@
 {% block content %}
 <section class="page-intro"><div class="container"><p class="eyebrow">DATA NOTES</p><h1>資料說明</h1><p>先理解欄位，再解讀圖表。</p></div></section>
 <section class="container section-block about-grid">
-  <article class="prose-card"><span class="card-kicker">01 / DATA</span><h2>資料內容</h2><p>平台讀取本專案同步至 SQLite 的股票主檔、每日成交行情、融資融券歷史與 TDCC 股權分散資料。Web 查詢只讀取既有資料，不會在瀏覽時呼叫官方端點或執行同步。</p></article>
+  <article class="prose-card"><span class="card-kicker">01 / DATA</span><h2>資料內容</h2><p>平台讀取本專案同步至 SQLite 的股票主檔、每日成交行情、融資融券歷史與 TDCC 股權分散資料。一般 Web 查詢只讀取既有資料；首頁的「同步所有資料」按鈕會另外啟動背景同步工作。</p></article>
   <article class="prose-card"><span class="card-kicker">02 / PRICE</span><h2>市場成交均價</h2><p>圖表中的市場成交均價固定定義為「成交金額 ÷ 成交股數」。它是全市場成交的 proxy，不是融資買進均價，也不是任何個別投資人的持倉成本。</p></article>
   <article class="prose-card"><span class="card-kicker">03 / MODEL</span><h2>融資維持率估算</h2><p>融資成本與維持率區塊是以公開的每日行情與融資資料建立的估算模型，頁面會明確標示「估算」。結果僅供研究與風險提示，不代表券商實際計算、追繳線或帳戶數值。</p></article>
   <article class="prose-card"><span class="card-kicker">04 / TDCC</span><h2>股權分散</h2><p>TDCC 資料依持股級距呈現股東人數、持股數與占比。資料日期通常按週更新；同一日期的多個級距會在表格中分列。</p></article>
 </section>
 <section class="container section-block notice-card"><span class="notice-icon">i</span><div><h2>使用限制</h2><p>資料可能因交易所、TPEx、TDCC 來源改版或同步時點而延遲、缺漏或修正。請搭配原始資料與正式券商／交易平台資訊判斷，不以本平台作為投資、交易或授信決策的唯一依據。</p></div></section>
 {% endblock %}
-

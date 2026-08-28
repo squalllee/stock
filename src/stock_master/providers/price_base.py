@@ -106,7 +106,7 @@ def parse_non_negative_int(
 
     raw = str(value).replace("\ufeff", "").strip()
     raw = raw.replace(",", "").replace("，", "").replace("\u00a0", "")
-    if not raw or raw in {"--", "－", "-"}:
+    if not raw or raw in {"--", "---", "－", "-"}:
         raise StockDataValidationError(
             f"{market} price record {record_index} has missing {field}; "
             "expected an integer."
@@ -139,7 +139,7 @@ def parse_optional_non_negative_int(
     """Return None for optional blanks and reject other invalid values."""
 
     raw = str(value).replace("\ufeff", "").strip()
-    if not raw or raw in {"--", "－", "-"}:
+    if not raw or raw in {"--", "---", "－", "-"}:
         return None
     return parse_non_negative_int(
         value,
@@ -160,7 +160,7 @@ def parse_optional_price(
 
     raw = str(value).replace("\ufeff", "").strip()
     raw = raw.replace(",", "").replace("，", "").replace("\u00a0", "")
-    if not raw or raw in {"--", "－", "-"}:
+    if not raw or raw in {"--", "---", "－", "-"}:
         return None
     try:
         number = float(raw)

@@ -1,4 +1,4 @@
-"""HTML page routes for the read-only stock Web platform."""
+"""HTML page routes for the stock Web platform."""
 
 from __future__ import annotations
 
@@ -75,4 +75,3 @@ def about(request: Request) -> HTMLResponse:
         name="about.html",
         context={},
     )
-

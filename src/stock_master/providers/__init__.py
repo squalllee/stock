@@ -6,7 +6,10 @@ from .price_base import PriceProvider
 from .tpex_price import TPExPriceProvider
 from .tpex_margin import TPExMarginProvider
 from .tdcc import TDCCDistributionProvider
-from .tdcc_history import TDCCHistoricalDistributionProvider
+from .tdcc_history import (
+    TDCCHistoricalDistributionProvider,
+    TDCCHistoricalQueryResult,
+)
 from .tpex import TPExStockProvider
 from .twse_margin import TWSEMarginProvider
 from .twse_price import TWSEPriceProvider
@@ -23,6 +26,7 @@ __all__ = [
     "TPExPriceProvider",
     "TDCCDistributionProvider",
     "TDCCHistoricalDistributionProvider",
+    "TDCCHistoricalQueryResult",
     "TPExStockProvider",
     "TWSEStockProvider",
 ]

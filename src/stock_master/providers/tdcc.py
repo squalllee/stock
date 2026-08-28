@@ -164,6 +164,7 @@ def normalize_data_date(value: object) -> str:
         .replace("月", "/")
         .replace("日", "")
     )
+    raw = "".join(raw.split())
 
     match = _DATE_SEPARATOR_PATTERN.fullmatch(raw)
     if match:
