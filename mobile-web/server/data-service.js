@@ -44,7 +44,7 @@ export function createStockDataService(supabase) {
           .maybeSingle(),
         supabase.rpc("get_tdcc_stock_detail", {
           p_stock_code: stockCode,
-          p_weeks: weeks,
+          p_weeks: MAX_DETAIL_WEEKS,
         }),
         getPriceHistory(stockCode, weeks),
       ]);
@@ -57,11 +57,13 @@ export function createStockDataService(supabase) {
         throw new SupabaseQueryError("TDCC 明細查詢", historyResult.error);
       }
 
-      const history = (historyResult.data || []).map(normalizeHoldingRow);
+      const fullHistory = (historyResult.data || []).map(normalizeHoldingRow);
+      const history = fullHistory.slice(0, weeks);
       return {
         stock: stockResult.data,
-        latest: history[0] || null,
+        latest: fullHistory[0] || null,
         history,
+        annual_baselines: buildAnnualBaselines(fullHistory),
         prices: priceRows,
       };
     },
@@ -179,6 +181,23 @@ function normalizePriceRow(row) {
     close_price: numberOrNull(row.close_price),
     market_average_price: numberOrNull(row.market_average_price),
   };
+}
+
+function buildAnnualBaselines(history) {
+  return history.reduce((baselines, row) => {
+    const year = String(row.data_date || "").slice(0, 4);
+    if (!/^\d{4}$/.test(year)) return baselines;
+    const current = baselines[year];
+    baselines[year] = {
+      large_ratio: current
+        ? Math.min(current.large_ratio, row.large_ratio)
+        : row.large_ratio,
+      retail_ratio: current
+        ? Math.min(current.retail_ratio, row.retail_ratio)
+        : row.retail_ratio,
+    };
+    return baselines;
+  }, {});
 }
 
 function numberOrZero(value) {

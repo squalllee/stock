@@ -111,6 +111,7 @@ describe("stock data service", () => {
   });
 
   it("includes daily prices in stock detail", async () => {
+    const rpcCalls = [];
     const supabase = {
       from: () => ({
         select() {
@@ -126,9 +127,12 @@ describe("stock data service", () => {
           };
         },
       }),
-      rpc: async (name) => ({
-        data: name === "get_tdcc_stock_detail"
-          ? [{
+      rpc: async (name, args) => {
+        rpcCalls.push([name, args]);
+        return {
+          data: name === "get_tdcc_stock_detail"
+          ? [
+            {
               data_date: "2026-08-21",
               large_holder_count: "10",
               large_share_count: "100000",
@@ -136,7 +140,26 @@ describe("stock data service", () => {
               retail_holder_count: "20",
               retail_share_count: "20000",
               retail_ratio: "2",
-            }]
+            },
+            {
+              data_date: "2026-08-14",
+              large_holder_count: "10",
+              large_share_count: "90000",
+              large_ratio: "72",
+              retail_holder_count: "20",
+              retail_share_count: "24000",
+              retail_ratio: "2.4",
+            },
+            {
+              data_date: "2026-01-02",
+              large_holder_count: "10",
+              large_share_count: "80000",
+              large_ratio: "65",
+              retail_holder_count: "20",
+              retail_share_count: "18000",
+              retail_ratio: "1.8",
+            },
+          ]
           : [{
               trade_date: "2026-08-27",
               market: "TWSE",
@@ -148,14 +171,22 @@ describe("stock data service", () => {
               close_price: "103",
               market_average_price: "100",
             }],
-        error: null,
-      }),
+          error: null,
+        };
+      },
     };
 
-    const detail = await createStockDataService(supabase).getStockDetail("2330", 26);
+    const detail = await createStockDataService(supabase).getStockDetail("2330", 2);
 
     assert.equal(detail.latest.large_ratio, 80);
+    assert.equal(detail.history.length, 2);
+    assert.equal(detail.annual_baselines["2026"].large_ratio, 65);
+    assert.equal(detail.annual_baselines["2026"].retail_ratio, 1.8);
     assert.equal(detail.prices[0].close_price, 103);
     assert.equal(detail.prices[0].trade_volume, 1000000);
+    assert.deepEqual(rpcCalls[0], [
+      "get_tdcc_stock_detail",
+      { p_stock_code: "2330", p_weeks: 104 },
+    ]);
   });
 });

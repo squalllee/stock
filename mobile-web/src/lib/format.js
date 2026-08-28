@@ -23,6 +23,10 @@ export function formatRatio(value) {
   return `${ratioFormatter.format(Number(value || 0))}%`;
 }
 
+export function formatIndex(value) {
+  return ratioFormatter.format(Number(value || 0));
+}
+
 export function formatSignedRatio(value) {
   const number = Number(value || 0);
   return `${number > 0 ? "+" : ""}${ratioFormatter.format(number)}%`;

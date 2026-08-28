@@ -50,6 +50,7 @@ describe("mobile web API", () => {
           stock: { stock_code: "2330", stock_name: "台積電", market: "TWSE" },
           latest: { data_date: "2026-08-21", large_ratio: 84.71 },
           history: [],
+          annual_baselines: { "2026": { large_ratio: 80, retail_ratio: 6 } },
           prices: [],
         };
       },

@@ -1,10 +1,10 @@
 import { CalendarDays, Info, TrendingDown, TrendingUp, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -17,9 +17,11 @@ import { fetchJson } from "../lib/api.js";
 import {
   formatAccounts,
   formatDate,
+  formatIndex,
   formatLots,
   formatRatio,
   formatShortDate,
+  formatSignedPoints,
   formatSignedRatio,
   marketLabel,
 } from "../lib/format.js";
@@ -55,7 +57,13 @@ export default function StockDetailPage({ stockCode }) {
     return <div className="page detail-page"><ErrorState message={state.error} onRetry={loadDetail} /></div>;
   }
 
-  const { stock, latest, history, prices = [] } = state.data;
+  const {
+    stock,
+    latest,
+    history,
+    annual_baselines: annualBaselines = {},
+    prices = [],
+  } = state.data;
   return (
     <div className="page detail-page">
       <section className="detail-hero" aria-labelledby="detail-title">
@@ -120,11 +128,11 @@ export default function StockDetailPage({ stockCode }) {
           <section className="detail-section">
             <div className="section-heading compact">
               <div>
-                <h2>持股比例趨勢</h2>
-                <p>比較大戶與散戶在不同週期的比例變化。</p>
+                <h2>持股比例增幅</h2>
+                <p>每個年度的最低持股比例設為 1，只比較其後增加的幅度。</p>
               </div>
             </div>
-            <TrendChart history={history} />
+            <TrendChart history={history} annualBaselines={annualBaselines} />
           </section>
 
           <section className="detail-section">
@@ -165,29 +173,73 @@ function HoldingHero({ variant, title, ratio, shares, holders }) {
   );
 }
 
-function TrendChart({ history }) {
+function TrendChart({ history, annualBaselines }) {
   const chartData = useMemo(
-    () => [...history].reverse().map((item) => ({
-      ...item,
-      label: formatShortDate(item.data_date),
-    })),
-    [history],
+    () => {
+      const baselines = resolveAnnualBaselines(history, annualBaselines);
+      return [...history].reverse().map((item) => {
+        const year = item.data_date.slice(0, 4);
+        const baseline = baselines[year];
+        const largeIncrease = Math.max(0, item.large_ratio - baseline.large_ratio);
+        const retailIncrease = Math.max(0, item.retail_ratio - baseline.retail_ratio);
+        return {
+          ...item,
+          label: formatShortDate(item.data_date),
+          baseline_year: year,
+          large_baseline: baseline.large_ratio,
+          retail_baseline: baseline.retail_ratio,
+          large_increase: largeIncrease,
+          retail_increase: retailIncrease,
+          large_index: roundTrendValue(largeIncrease + 1),
+          retail_index: roundTrendValue(retailIncrease + 1),
+        };
+      });
+    },
+    [annualBaselines, history],
   );
+  const latestYear = history[0]?.data_date.slice(0, 4);
+  const latestBaseline = latestYear
+    ? resolveAnnualBaselines(history, annualBaselines)[latestYear]
+    : null;
 
   return (
-    <div className="chart-wrap" aria-label="大戶與散戶持股比例折線圖">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 12, right: 2, left: -18, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(89, 119, 119, .16)" vertical={false} />
-          <XAxis dataKey="label" stroke="#71858a" tickLine={false} axisLine={false} minTickGap={24} fontSize={11} />
-          <YAxis stroke="#71858a" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(value) => `${value}%`} />
-          <Tooltip content={<ChartTooltip />} />
-          <Legend iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-          <Line type="monotone" name="大戶" dataKey="large_ratio" stroke="#078b78" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-          <Line type="monotone" name="散戶" dataKey="retail_ratio" stroke="#bd6907" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <>
+      <div className="chart-wrap holding-bar-chart" aria-label="大戶與散戶持股增幅指數長條圖">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={chartData}
+            margin={{ top: 12, right: 2, left: -18, bottom: 0 }}
+            barCategoryGap="24%"
+            barGap={2}
+          >
+            <CartesianGrid stroke="rgba(89, 119, 119, .16)" vertical={false} />
+            <XAxis dataKey="label" stroke="#71858a" tickLine={false} axisLine={false} minTickGap={24} fontSize={11} />
+            <YAxis stroke="#71858a" tickLine={false} axisLine={false} fontSize={11} domain={[0, "auto"]} tickFormatter={formatIndex} />
+            <Tooltip cursor={{ fill: "rgba(8, 127, 112, .05)" }} content={<ChartTooltip />} />
+            <Legend iconType="square" wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+            <Bar name="大戶增幅指數" dataKey="large_index" fill="#078b78" radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar name="散戶增幅指數" dataKey="retail_index" fill="#bd6907" radius={[4, 4, 0, 0]} maxBarSize={18} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {latestBaseline ? (
+        <div className="trend-baseline">
+          <div className="trend-baseline-values">
+            <div className="large">
+              <span>{latestYear} 大戶最低</span>
+              <strong>{formatRatio(latestBaseline.large_ratio)}</strong>
+              <small>基準 1</small>
+            </div>
+            <div className="retail">
+              <span>{latestYear} 散戶最低</span>
+              <strong>{formatRatio(latestBaseline.retail_ratio)}</strong>
+              <small>基準 1</small>
+            </div>
+          </div>
+          <p>柱高 = 當期持股比例 - 當年度最低持股比例 + 1</p>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -197,10 +249,40 @@ function ChartTooltip({ active, payload }) {
   return (
     <div className="chart-tooltip">
       <strong>{formatDate(row.data_date)}</strong>
-      <span className="large-dot">大戶 {formatRatio(row.large_ratio)}</span>
-      <span className="retail-dot">散戶 {formatRatio(row.retail_ratio)}</span>
+      <span className="large-dot">
+        大戶指數 {formatIndex(row.large_index)}
+        <small>實際 {formatRatio(row.large_ratio)}，較年度最低 {formatSignedPoints(row.large_increase)}</small>
+      </span>
+      <span className="retail-dot">
+        散戶指數 {formatIndex(row.retail_index)}
+        <small>實際 {formatRatio(row.retail_ratio)}，較年度最低 {formatSignedPoints(row.retail_increase)}</small>
+      </span>
     </div>
   );
+}
+
+function resolveAnnualBaselines(history, providedBaselines) {
+  return history.reduce((baselines, item) => {
+    const year = item.data_date.slice(0, 4);
+    if (providedBaselines?.[year]) {
+      baselines[year] = providedBaselines[year];
+      return baselines;
+    }
+    const current = baselines[year];
+    baselines[year] = {
+      large_ratio: current
+        ? Math.min(current.large_ratio, item.large_ratio)
+        : item.large_ratio,
+      retail_ratio: current
+        ? Math.min(current.retail_ratio, item.retail_ratio)
+        : item.retail_ratio,
+    };
+    return baselines;
+  }, {});
+}
+
+function roundTrendValue(value) {
+  return Math.round(value * 10000) / 10000;
 }
 
 function WeeklyHistory({ history }) {
