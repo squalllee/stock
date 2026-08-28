@@ -1,5 +1,6 @@
 const MAX_SEARCH_LIMIT = 20;
 const MAX_DETAIL_WEEKS = 104;
+const MAX_PRICE_WEEKS = 104;
 const MAX_SCREENER_LIMIT = 200;
 const MAX_TURN_LIMIT = 200;
 
@@ -12,6 +13,16 @@ export class SupabaseQueryError extends Error {
 }
 
 export function createStockDataService(supabase) {
+  async function getPriceHistory(stockCode, requestedWeeks = 26) {
+    const weeks = clampInteger(requestedWeeks, 2, MAX_PRICE_WEEKS, 26);
+    const { data, error } = await supabase.rpc("get_stock_price_history", {
+      p_stock_code: stockCode,
+      p_weeks: weeks,
+    });
+    if (error) throw new SupabaseQueryError("股價歷史查詢", error);
+    return (data || []).map(normalizePriceRow);
+  }
+
   return {
     async searchStocks(query, requestedLimit = 8) {
       const limit = clampInteger(requestedLimit, 1, MAX_SEARCH_LIMIT, 8);
@@ -25,7 +36,7 @@ export function createStockDataService(supabase) {
 
     async getStockDetail(stockCode, requestedWeeks = 26) {
       const weeks = clampInteger(requestedWeeks, 2, MAX_DETAIL_WEEKS, 26);
-      const [stockResult, historyResult] = await Promise.all([
+      const [stockResult, historyResult, priceRows] = await Promise.all([
         supabase
           .from("stocks")
           .select("stock_code,stock_name,market")
@@ -35,6 +46,7 @@ export function createStockDataService(supabase) {
           p_stock_code: stockCode,
           p_weeks: weeks,
         }),
+        getPriceHistory(stockCode, weeks),
       ]);
 
       if (stockResult.error) {
@@ -50,8 +62,11 @@ export function createStockDataService(supabase) {
         stock: stockResult.data,
         latest: history[0] || null,
         history,
+        prices: priceRows,
       };
     },
+
+    getPriceHistory,
 
     async getIncreasingStocks(requestedWeeks = 3, requestedLimit = 100) {
       const weeks = clampInteger(requestedWeeks, 2, 12, 3);
@@ -152,7 +167,27 @@ function normalizeTurnRow(row) {
   };
 }
 
+function normalizePriceRow(row) {
+  return {
+    trade_date: row.trade_date,
+    market: row.market,
+    trade_volume: numberOrZero(row.trade_volume),
+    trade_value: numberOrZero(row.trade_value),
+    open_price: numberOrNull(row.open_price),
+    high_price: numberOrNull(row.high_price),
+    low_price: numberOrNull(row.low_price),
+    close_price: numberOrNull(row.close_price),
+    market_average_price: numberOrNull(row.market_average_price),
+  };
+}
+
 function numberOrZero(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }

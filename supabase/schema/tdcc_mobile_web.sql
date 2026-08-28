@@ -447,6 +447,59 @@ as $$
         stocks.stock_code;
 $$;
 
+create or replace function public.get_stock_price_history(
+    p_stock_code text,
+    p_weeks integer default 26
+)
+returns table (
+    trade_date date,
+    market text,
+    trade_volume bigint,
+    trade_value bigint,
+    open_price numeric,
+    high_price numeric,
+    low_price numeric,
+    close_price numeric,
+    market_average_price numeric
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+    with parameters as (
+        select least(greatest(coalesce(p_weeks, 26), 2), 104) as weeks
+    ),
+    ranked as (
+        select
+            p.trade_date,
+            p.market,
+            p.trade_volume,
+            p.trade_value,
+            p.open_price,
+            p.high_price,
+            p.low_price,
+            p.close_price,
+            p.market_average_price,
+            row_number() over (order by p.trade_date desc) as trade_rank
+        from public.price_history p
+        where p.stock_code = btrim(p_stock_code)
+    )
+    select
+        ranked.trade_date,
+        ranked.market,
+        ranked.trade_volume,
+        ranked.trade_value,
+        ranked.open_price,
+        ranked.high_price,
+        ranked.low_price,
+        ranked.close_price,
+        ranked.market_average_price
+    from ranked
+    where ranked.trade_rank <= ((select weeks from parameters) * 5 + 20)
+    order by ranked.trade_date;
+$$;
+
 revoke all on function public.search_tdcc_stocks(text, integer)
     from public, anon, authenticated;
 revoke all on function public.get_tdcc_stock_detail(text, integer)
@@ -454,6 +507,8 @@ revoke all on function public.get_tdcc_stock_detail(text, integer)
 revoke all on function public.get_tdcc_increasing_stocks(integer, integer)
     from public, anon, authenticated;
 revoke all on function public.get_tdcc_holder_turns(integer)
+    from public, anon, authenticated;
+revoke all on function public.get_stock_price_history(text, integer)
     from public, anon, authenticated;
 
 grant execute on function public.search_tdcc_stocks(text, integer)
@@ -464,6 +519,8 @@ grant execute on function public.get_tdcc_increasing_stocks(integer, integer)
     to service_role;
 grant execute on function public.get_tdcc_holder_turns(integer)
     to service_role;
+grant execute on function public.get_stock_price_history(text, integer)
+    to service_role;
 
 comment on function public.search_tdcc_stocks(text, integer) is
     'Mobile web stock search with the latest TDCC level 15 and level 1-6 summaries.';
@@ -473,5 +530,7 @@ comment on function public.get_tdcc_increasing_stocks(integer, integer) is
     'Stocks whose TDCC level 15 holding ratio strictly increased in every requested recent week.';
 comment on function public.get_tdcc_holder_turns(integer) is
     'Stocks whose TDCC level 15 holding direction changed between the latest three weekly observations.';
+comment on function public.get_stock_price_history(text, integer) is
+    'Daily OHLC, volume and market average price history for one stock, with MA warmup rows.';
 
 commit;

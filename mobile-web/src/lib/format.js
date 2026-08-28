@@ -5,6 +5,10 @@ const ratioFormatter = new Intl.NumberFormat("zh-TW", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+const priceFormatter = new Intl.NumberFormat("zh-TW", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 const dateFormatter = new Intl.DateTimeFormat("zh-TW", {
   year: "numeric",
   month: "2-digit",
@@ -35,6 +39,16 @@ export function formatLots(shares) {
 
 export function formatAccounts(value) {
   return `${integerFormatter.format(Number(value || 0))} 戶`;
+}
+
+export function formatPrice(value) {
+  if (value === null || value === undefined || value === "") return "無資料";
+  const number = Number(value);
+  return Number.isFinite(number) ? priceFormatter.format(number) : "無資料";
+}
+
+export function formatVolume(value) {
+  return `${integerFormatter.format(Number(value || 0) / 1000)} 張`;
 }
 
 export function formatDate(value) {

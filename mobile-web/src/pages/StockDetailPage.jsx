@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback.jsx";
+import PriceChart from "../components/PriceChart.jsx";
 import { fetchJson } from "../lib/api.js";
 import {
   formatAccounts,
@@ -54,7 +55,7 @@ export default function StockDetailPage({ stockCode }) {
     return <div className="page detail-page"><ErrorState message={state.error} onRetry={loadDetail} /></div>;
   }
 
-  const { stock, latest, history } = state.data;
+  const { stock, latest, history, prices = [] } = state.data;
   return (
     <div className="page detail-page">
       <section className="detail-hero" aria-labelledby="detail-title">
@@ -91,15 +92,15 @@ export default function StockDetailPage({ stockCode }) {
             />
           </section>
 
-          <section className="detail-section">
+          <section className="detail-section price-section">
             <div className="section-heading compact">
               <div>
-                <h2>持股比例趨勢</h2>
-                <p>比較大戶與散戶在不同週期的比例變化。</p>
+                <h2>每日股價</h2>
+                <p>日 K 線搭配 5、10、20 日移動平均線，成交量列在下方。</p>
               </div>
             </div>
             <div className="range-toolbar">
-              <span>顯示區間</span>
+              <span>股價與持股趨勢區間</span>
               <div className="range-options">
                 {RANGE_OPTIONS.map((value) => (
                   <button
@@ -111,6 +112,16 @@ export default function StockDetailPage({ stockCode }) {
                     {value}週
                   </button>
                 ))}
+              </div>
+            </div>
+            <PriceChart prices={prices} weeks={weeks} />
+          </section>
+
+          <section className="detail-section">
+            <div className="section-heading compact">
+              <div>
+                <h2>持股比例趨勢</h2>
+                <p>比較大戶與散戶在不同週期的比例變化。</p>
               </div>
             </div>
             <TrendChart history={history} />
