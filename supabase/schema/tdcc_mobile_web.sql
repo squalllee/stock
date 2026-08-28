@@ -3,6 +3,13 @@ begin;
 create index if not exists idx_tdcc_distributions_date_level_stock
     on public.tdcc_distributions (data_date desc, holding_level, stock_code);
 
+-- These functions gain price columns below. PostgreSQL requires dropping a
+-- function before changing its RETURNS TABLE shape; the surrounding
+-- transaction keeps the replacement atomic.
+drop function if exists public.search_tdcc_stocks(text, integer);
+drop function if exists public.get_tdcc_increasing_stocks(integer, integer);
+drop function if exists public.get_tdcc_holder_turns(integer);
+
 create or replace function public.search_tdcc_stocks(
     p_query text,
     p_limit integer default 8
@@ -12,6 +19,8 @@ returns table (
     stock_name text,
     market text,
     data_date date,
+    latest_price_date date,
+    latest_close_price numeric,
     large_holder_count numeric,
     large_share_count numeric,
     large_ratio numeric,
@@ -49,6 +58,8 @@ as $$
         matched.stock_name,
         matched.market,
         latest.data_date,
+        latest_price.trade_date,
+        latest_price.close_price,
         coalesce(latest.large_holder_count, 0),
         coalesce(latest.large_share_count, 0),
         coalesce(latest.large_ratio, 0),
@@ -78,6 +89,16 @@ as $$
         order by d.data_date desc
         limit 1
     ) latest on true
+    left join lateral (
+        select
+            p.trade_date,
+            p.close_price
+        from public.price_history p
+        where p.stock_code = matched.stock_code
+          and p.close_price is not null
+        order by p.trade_date desc
+        limit 1
+    ) latest_price on true
     order by matched.match_rank, matched.stock_code;
 $$;
 
@@ -144,6 +165,8 @@ returns table (
     market text,
     start_date date,
     latest_date date,
+    latest_price_date date,
+    latest_close_price numeric,
     start_large_ratio numeric,
     latest_large_ratio numeric,
     increase_percentage_points numeric,
@@ -255,6 +278,8 @@ as $$
         stocks.market,
         summary.start_date,
         summary.latest_date,
+        latest_price.trade_date,
+        latest_price.close_price,
         summary.start_large_ratio,
         summary.latest_large_ratio,
         summary.latest_large_ratio - summary.start_large_ratio
@@ -267,6 +292,16 @@ as $$
         summary.streak_weeks
     from summary
     inner join public.stocks on stocks.stock_code = summary.stock_code
+    left join lateral (
+        select
+            p.trade_date,
+            p.close_price
+        from public.price_history p
+        where p.stock_code = stocks.stock_code
+          and p.close_price is not null
+        order by p.trade_date desc
+        limit 1
+    ) latest_price on true
     order by
         increase_percentage_points desc,
         summary.latest_large_ratio desc,
@@ -285,6 +320,8 @@ returns table (
     oldest_date date,
     previous_date date,
     latest_date date,
+    latest_price_date date,
+    latest_close_price numeric,
     oldest_large_ratio numeric,
     previous_large_ratio numeric,
     latest_large_ratio numeric,
@@ -428,6 +465,8 @@ as $$
         ranked.oldest_date,
         ranked.previous_date,
         ranked.latest_date,
+        latest_price.trade_date,
+        latest_price.close_price,
         ranked.oldest_large_ratio,
         ranked.previous_large_ratio,
         ranked.latest_large_ratio,
@@ -440,6 +479,16 @@ as $$
         ranked.retail_ratio
     from ranked
     inner join public.stocks on stocks.stock_code = ranked.stock_code
+    left join lateral (
+        select
+            p.trade_date,
+            p.close_price
+        from public.price_history p
+        where p.stock_code = stocks.stock_code
+          and p.close_price is not null
+        order by p.trade_date desc
+        limit 1
+    ) latest_price on true
     where ranked.turn_rank <= (select row_limit from parameters)
     order by
         ranked.turn_type,
@@ -523,13 +572,13 @@ grant execute on function public.get_stock_price_history(text, integer)
     to service_role;
 
 comment on function public.search_tdcc_stocks(text, integer) is
-    'Mobile web stock search with the latest TDCC level 15 and level 1-6 summaries.';
+    'Mobile web stock search with latest close and TDCC level 15 and level 1-6 summaries.';
 comment on function public.get_tdcc_stock_detail(text, integer) is
     'Weekly TDCC large-holder and retail-holder history for one stock.';
 comment on function public.get_tdcc_increasing_stocks(integer, integer) is
-    'Stocks whose TDCC level 15 holding ratio strictly increased in every requested recent week.';
+    'Stocks with latest close whose TDCC level 15 holding ratio strictly increased in every requested recent week.';
 comment on function public.get_tdcc_holder_turns(integer) is
-    'Stocks whose TDCC level 15 holding direction changed between the latest three weekly observations.';
+    'Stocks with latest close whose TDCC level 15 holding direction changed between the latest three weekly observations.';
 comment on function public.get_stock_price_history(text, integer) is
     'Daily OHLC, volume and market average price history for one stock, with MA warmup rows.';
 

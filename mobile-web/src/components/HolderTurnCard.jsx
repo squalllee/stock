@@ -4,8 +4,10 @@ import { AppLink } from "../lib/router.jsx";
 import {
   formatDate,
   formatLots,
+  formatPrice,
   formatRatio,
   formatSignedPoints,
+  formatShortDate,
   marketLabel,
 } from "../lib/format.js";
 
@@ -29,6 +31,20 @@ export default function HolderTurnCard({ stock }) {
             <div className="stock-meta">
               <span>{marketLabel(stock.market)}</span>
               <span>資料日期 {formatDate(stock.latest_date)}</span>
+              <span
+                className="stock-close"
+                title={stock.latest_price_date
+                  ? `股價日期 ${formatDate(stock.latest_price_date)}`
+                  : "尚無每日成交價"}
+              >
+                最新收盤 <strong>{formatPrice(stock.latest_close_price)}</strong>
+                {stock.latest_close_price === null || stock.latest_close_price === undefined
+                  ? null
+                  : " 元"}
+                {stock.latest_price_date
+                  ? ` · ${formatShortDate(stock.latest_price_date)}`
+                  : null}
+              </span>
             </div>
           </div>
         </div>

@@ -108,6 +108,7 @@ function normalizeSummary(row) {
     stock_code: row.stock_code,
     stock_name: row.stock_name,
     market: row.market,
+    ...normalizeLatestPrice(row),
     ...normalizeHoldingRow(row),
   };
 }
@@ -131,6 +132,7 @@ function normalizeScreenerRow(row) {
     market: row.market,
     start_date: row.start_date,
     latest_date: row.latest_date,
+    ...normalizeLatestPrice(row),
     start_large_ratio: numberOrZero(row.start_large_ratio),
     latest_large_ratio: numberOrZero(row.latest_large_ratio),
     increase_percentage_points: numberOrZero(row.increase_percentage_points),
@@ -152,6 +154,7 @@ function normalizeTurnRow(row) {
     oldest_date: row.oldest_date,
     previous_date: row.previous_date,
     latest_date: row.latest_date,
+    ...normalizeLatestPrice(row),
     oldest_large_ratio: numberOrZero(row.oldest_large_ratio),
     previous_large_ratio: numberOrZero(row.previous_large_ratio),
     latest_large_ratio: numberOrZero(row.latest_large_ratio),
@@ -166,6 +169,13 @@ function normalizeTurnRow(row) {
     retail_holder_count: numberOrZero(row.retail_holder_count),
     retail_share_count: numberOrZero(row.retail_share_count),
     retail_ratio: numberOrZero(row.retail_ratio),
+  };
+}
+
+function normalizeLatestPrice(row) {
+  return {
+    latest_price_date: row.latest_price_date || null,
+    latest_close_price: numberOrNull(row.latest_close_price),
   };
 }
 

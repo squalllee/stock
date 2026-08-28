@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 import time
 from collections.abc import Callable
 from http.client import IncompleteRead, RemoteDisconnected
@@ -13,9 +14,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import (
     HTTPCookieProcessor,
+    HTTPSHandler,
     Request,
     build_opener,
-    urlopen,
 )
 
 from stock_master.exceptions import StockProviderError
@@ -23,6 +24,23 @@ from stock_master.exceptions import StockProviderError
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_REDIRECT_STATUS_CODES = frozenset({307, 308})
+
+
+def _create_compatible_ssl_context() -> ssl.SSLContext:
+    """Return a verified TLS context compatible with market data endpoints.
+
+    Python 3.13 enables ``VERIFY_X509_STRICT`` by default.  Some official
+    market-data endpoints currently serve a certificate chain that OpenSSL
+    rejects in strict mode because it lacks a subject key identifier.  Keep
+    CA and hostname verification enabled while retaining Python 3.12's
+    certificate-chain compatibility.
+    """
+
+    context = ssl.create_default_context()
+    strict_flag = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    if strict_flag:
+        context.verify_flags &= ~strict_flag
+    return context
 
 
 def _content_range_total(response: object) -> int | None:
@@ -58,7 +76,7 @@ class JsonHttpClient:
         max_attempts: int = 3,
         backoff_seconds: float = 1.0,
         user_agent: str = "taiwan-stock-master/0.1",
-        opener: Callable[..., object] = urlopen,
+        opener: Callable[..., object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if timeout <= 0:
@@ -72,7 +90,12 @@ class JsonHttpClient:
         self.max_attempts = max_attempts
         self.backoff_seconds = backoff_seconds
         self.user_agent = user_agent
-        self._opener = opener
+        if opener is None:
+            self._opener = build_opener(
+                HTTPSHandler(context=_create_compatible_ssl_context())
+            ).open
+        else:
+            self._opener = opener
         self._sleep = sleep
 
     def get_json(self, url: str) -> object:
@@ -253,7 +276,10 @@ class TextHttpClient:
         self._sleep = sleep
         if opener is None:
             cookie_jar = CookieJar()
-            self._opener = build_opener(HTTPCookieProcessor(cookie_jar)).open
+            self._opener = build_opener(
+                HTTPSHandler(context=_create_compatible_ssl_context()),
+                HTTPCookieProcessor(cookie_jar),
+            ).open
         else:
             self._opener = opener
 

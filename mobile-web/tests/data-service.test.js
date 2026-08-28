@@ -19,6 +19,8 @@ describe("stock data service", () => {
             stock_name: "台積電",
             market: "TWSE",
             data_date: "2026-08-21",
+            latest_price_date: "2026-08-27",
+            latest_close_price: "1160.00",
             large_holder_count: "1479",
             large_share_count: "21968307511",
             large_ratio: "84.7100",
@@ -36,6 +38,34 @@ describe("stock data service", () => {
     assert.equal(rows[0].large_ratio, 84.71);
     assert.equal(rows[0].large_share_count, 21968307511);
     assert.equal(rows[0].retail_holder_count, 3051385);
+    assert.equal(rows[0].latest_price_date, "2026-08-27");
+    assert.equal(rows[0].latest_close_price, 1160);
+  });
+
+  it("normalizes latest close prices for increasing-holder cards", async () => {
+    const supabase = {
+      rpc: async () => ({
+        data: [{
+          stock_code: "4931",
+          stock_name: "新盛力",
+          market: "TPEX",
+          start_date: "2026-08-07",
+          latest_date: "2026-08-21",
+          latest_price_date: "2026-08-27",
+          latest_close_price: "58.40",
+          start_large_ratio: "13.48",
+          latest_large_ratio: "24.71",
+          increase_percentage_points: "11.23",
+          streak_weeks: "3",
+        }],
+        error: null,
+      }),
+    };
+
+    const rows = await createStockDataService(supabase).getIncreasingStocks(3, 50);
+
+    assert.equal(rows[0].latest_price_date, "2026-08-27");
+    assert.equal(rows[0].latest_close_price, 58.4);
   });
 
   it("normalizes holder direction turns", async () => {
@@ -50,6 +80,8 @@ describe("stock data service", () => {
             oldest_date: "2026-08-07",
             previous_date: "2026-08-14",
             latest_date: "2026-08-21",
+            latest_price_date: "2026-08-27",
+            latest_close_price: "1160.00",
             oldest_large_ratio: "84.20",
             previous_large_ratio: "83.90",
             latest_large_ratio: "84.71",
@@ -72,6 +104,8 @@ describe("stock data service", () => {
     assert.equal(rows[0].previous_change_percentage_points, -0.3);
     assert.equal(rows[0].latest_change_percentage_points, 0.81);
     assert.equal(rows[0].latest_large_ratio, 84.71);
+    assert.equal(rows[0].latest_price_date, "2026-08-27");
+    assert.equal(rows[0].latest_close_price, 1160);
   });
 
   it("normalizes daily price history values", async () => {

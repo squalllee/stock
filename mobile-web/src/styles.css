@@ -747,6 +747,19 @@ a:focus-visible {
   border-left: 1px solid var(--line);
 }
 
+.stock-meta .stock-close {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.stock-close strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+}
+
 .card-arrow {
   display: grid;
   flex: 0 0 31px;

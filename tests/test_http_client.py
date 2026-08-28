@@ -1,8 +1,13 @@
 import json
+import ssl
 from http.client import IncompleteRead
 from urllib.error import HTTPError
 
-from stock_master.providers.http import JsonHttpClient, TextHttpClient
+from stock_master.providers.http import (
+    JsonHttpClient,
+    TextHttpClient,
+    _create_compatible_ssl_context,
+)
 
 
 class FakeResponse:
@@ -70,6 +75,16 @@ class RangeResponse:
             partial = self.payload[: self.fail_after]
             raise IncompleteRead(partial, len(self.payload) - len(partial))
         return self.payload
+
+
+def test_compatible_ssl_context_keeps_verification_without_strict_mode():
+    context = _create_compatible_ssl_context()
+
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    strict_flag = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    if strict_flag:
+        assert not context.verify_flags & strict_flag
 
 
 def test_http_client_sets_headers_and_decodes_json():
