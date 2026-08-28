@@ -37,4 +37,40 @@ describe("stock data service", () => {
     assert.equal(rows[0].large_share_count, 21968307511);
     assert.equal(rows[0].retail_holder_count, 3051385);
   });
+
+  it("normalizes holder direction turns", async () => {
+    const supabase = {
+      rpc: async () => ({
+        data: [
+          {
+            turn_type: "sell_to_buy",
+            stock_code: "2330",
+            stock_name: "台積電",
+            market: "TWSE",
+            oldest_date: "2026-08-07",
+            previous_date: "2026-08-14",
+            latest_date: "2026-08-21",
+            oldest_large_ratio: "84.20",
+            previous_large_ratio: "83.90",
+            latest_large_ratio: "84.71",
+            previous_change_percentage_points: "-0.30",
+            latest_change_percentage_points: "0.81",
+            large_holder_count: "1479",
+            large_share_count: "21968307511",
+            retail_holder_count: "3051385",
+            retail_share_count: "2085184706",
+            retail_ratio: "8.0000",
+          },
+        ],
+        error: null,
+      }),
+    };
+
+    const rows = await createStockDataService(supabase).getHolderTurns(50);
+
+    assert.equal(rows[0].turn_type, "sell_to_buy");
+    assert.equal(rows[0].previous_change_percentage_points, -0.3);
+    assert.equal(rows[0].latest_change_percentage_points, 0.81);
+    assert.equal(rows[0].latest_large_ratio, 84.71);
+  });
 });

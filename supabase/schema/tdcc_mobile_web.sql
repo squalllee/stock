@@ -274,11 +274,186 @@ as $$
     limit (select row_limit from parameters);
 $$;
 
+create or replace function public.get_tdcc_holder_turns(
+    p_limit integer default 100
+)
+returns table (
+    turn_type text,
+    stock_code text,
+    stock_name text,
+    market text,
+    oldest_date date,
+    previous_date date,
+    latest_date date,
+    oldest_large_ratio numeric,
+    previous_large_ratio numeric,
+    latest_large_ratio numeric,
+    previous_change_percentage_points numeric,
+    latest_change_percentage_points numeric,
+    large_holder_count numeric,
+    large_share_count numeric,
+    retail_holder_count numeric,
+    retail_share_count numeric,
+    retail_ratio numeric
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+    with parameters as (
+        select least(greatest(coalesce(p_limit, 100), 1), 200) as row_limit
+    ),
+    latest_dates as (
+        select distinct d.data_date
+        from public.tdcc_distributions d
+        order by d.data_date desc
+        limit 3
+    ),
+    weekly as (
+        select
+            d.stock_code,
+            d.data_date,
+            coalesce(
+                sum(d.shareholder_count) filter (where d.holding_level = 15),
+                0
+            ) as large_holder_count,
+            coalesce(
+                sum(d.share_count) filter (where d.holding_level = 15),
+                0
+            ) as large_share_count,
+            coalesce(
+                sum(d.holding_ratio) filter (where d.holding_level = 15),
+                0
+            ) as large_ratio,
+            coalesce(
+                sum(d.shareholder_count)
+                    filter (where d.holding_level between 1 and 6),
+                0
+            ) as retail_holder_count,
+            coalesce(
+                sum(d.share_count)
+                    filter (where d.holding_level between 1 and 6),
+                0
+            ) as retail_share_count,
+            coalesce(
+                sum(d.holding_ratio)
+                    filter (where d.holding_level between 1 and 6),
+                0
+            ) as retail_ratio
+        from public.tdcc_distributions d
+        inner join latest_dates on latest_dates.data_date = d.data_date
+        where d.holding_level between 1 and 6 or d.holding_level = 15
+        group by d.stock_code, d.data_date
+    ),
+    sequenced as (
+        select
+            weekly.*,
+            lag(weekly.data_date) over (
+                partition by weekly.stock_code
+                order by weekly.data_date
+            ) as previous_date,
+            lag(weekly.data_date, 2) over (
+                partition by weekly.stock_code
+                order by weekly.data_date
+            ) as oldest_date,
+            lag(weekly.large_ratio) over (
+                partition by weekly.stock_code
+                order by weekly.data_date
+            ) as previous_large_ratio,
+            lag(weekly.large_ratio, 2) over (
+                partition by weekly.stock_code
+                order by weekly.data_date
+            ) as oldest_large_ratio
+        from weekly
+    ),
+    turns as (
+        select
+            case
+                when sequenced.oldest_large_ratio > sequenced.previous_large_ratio
+                     and sequenced.large_ratio > sequenced.previous_large_ratio
+                    then 'sell_to_buy'
+                when sequenced.oldest_large_ratio < sequenced.previous_large_ratio
+                     and sequenced.large_ratio < sequenced.previous_large_ratio
+                    then 'buy_to_sell'
+            end as turn_type,
+            sequenced.stock_code,
+            sequenced.data_date as latest_date,
+            sequenced.oldest_date,
+            sequenced.previous_date,
+            sequenced.oldest_large_ratio,
+            sequenced.previous_large_ratio,
+            sequenced.large_ratio as latest_large_ratio,
+            sequenced.previous_large_ratio - sequenced.oldest_large_ratio
+                as previous_change_percentage_points,
+            sequenced.large_ratio - sequenced.previous_large_ratio
+                as latest_change_percentage_points,
+            sequenced.large_holder_count,
+            sequenced.large_share_count,
+            sequenced.retail_holder_count,
+            sequenced.retail_share_count,
+            sequenced.retail_ratio
+        from sequenced
+        where sequenced.data_date = (select max(data_date) from latest_dates)
+          and sequenced.oldest_large_ratio is not null
+          and sequenced.previous_large_ratio is not null
+          and (
+              (
+                  sequenced.oldest_large_ratio > sequenced.previous_large_ratio
+                  and sequenced.large_ratio > sequenced.previous_large_ratio
+              )
+              or (
+                  sequenced.oldest_large_ratio < sequenced.previous_large_ratio
+                  and sequenced.large_ratio < sequenced.previous_large_ratio
+              )
+          )
+    ),
+    ranked as (
+        select
+            turns.*,
+            row_number() over (
+                partition by turns.turn_type
+                order by
+                    abs(turns.latest_change_percentage_points) desc,
+                    turns.latest_large_ratio desc,
+                    turns.stock_code
+            ) as turn_rank
+        from turns
+    )
+    select
+        ranked.turn_type,
+        stocks.stock_code,
+        stocks.stock_name,
+        stocks.market,
+        ranked.oldest_date,
+        ranked.previous_date,
+        ranked.latest_date,
+        ranked.oldest_large_ratio,
+        ranked.previous_large_ratio,
+        ranked.latest_large_ratio,
+        ranked.previous_change_percentage_points,
+        ranked.latest_change_percentage_points,
+        ranked.large_holder_count,
+        ranked.large_share_count,
+        ranked.retail_holder_count,
+        ranked.retail_share_count,
+        ranked.retail_ratio
+    from ranked
+    inner join public.stocks on stocks.stock_code = ranked.stock_code
+    where ranked.turn_rank <= (select row_limit from parameters)
+    order by
+        ranked.turn_type,
+        abs(ranked.latest_change_percentage_points) desc,
+        stocks.stock_code;
+$$;
+
 revoke all on function public.search_tdcc_stocks(text, integer)
     from public, anon, authenticated;
 revoke all on function public.get_tdcc_stock_detail(text, integer)
     from public, anon, authenticated;
 revoke all on function public.get_tdcc_increasing_stocks(integer, integer)
+    from public, anon, authenticated;
+revoke all on function public.get_tdcc_holder_turns(integer)
     from public, anon, authenticated;
 
 grant execute on function public.search_tdcc_stocks(text, integer)
@@ -287,6 +462,8 @@ grant execute on function public.get_tdcc_stock_detail(text, integer)
     to service_role;
 grant execute on function public.get_tdcc_increasing_stocks(integer, integer)
     to service_role;
+grant execute on function public.get_tdcc_holder_turns(integer)
+    to service_role;
 
 comment on function public.search_tdcc_stocks(text, integer) is
     'Mobile web stock search with the latest TDCC level 15 and level 1-6 summaries.';
@@ -294,5 +471,7 @@ comment on function public.get_tdcc_stock_detail(text, integer) is
     'Weekly TDCC large-holder and retail-holder history for one stock.';
 comment on function public.get_tdcc_increasing_stocks(integer, integer) is
     'Stocks whose TDCC level 15 holding ratio strictly increased in every requested recent week.';
+comment on function public.get_tdcc_holder_turns(integer) is
+    'Stocks whose TDCC level 15 holding direction changed between the latest three weekly observations.';
 
 commit;

@@ -1,6 +1,7 @@
 const MAX_SEARCH_LIMIT = 20;
 const MAX_DETAIL_WEEKS = 104;
 const MAX_SCREENER_LIMIT = 200;
+const MAX_TURN_LIMIT = 200;
 
 export class SupabaseQueryError extends Error {
   constructor(operation, cause) {
@@ -67,6 +68,15 @@ export function createStockDataService(supabase) {
       if (error) throw new SupabaseQueryError("連續增持篩選", error);
       return (data || []).map(normalizeScreenerRow);
     },
+
+    async getHolderTurns(requestedLimit = 100) {
+      const limit = clampInteger(requestedLimit, 1, MAX_TURN_LIMIT, 100);
+      const { data, error } = await supabase.rpc("get_tdcc_holder_turns", {
+        p_limit: limit,
+      });
+      if (error) throw new SupabaseQueryError("大戶動向篩選", error);
+      return (data || []).map(normalizeTurnRow);
+    },
   };
 }
 
@@ -113,6 +123,32 @@ function normalizeScreenerRow(row) {
     retail_share_count: numberOrZero(row.retail_share_count),
     retail_ratio: numberOrZero(row.retail_ratio),
     streak_weeks: Number(row.streak_weeks || 0),
+  };
+}
+
+function normalizeTurnRow(row) {
+  return {
+    turn_type: row.turn_type,
+    stock_code: row.stock_code,
+    stock_name: row.stock_name,
+    market: row.market,
+    oldest_date: row.oldest_date,
+    previous_date: row.previous_date,
+    latest_date: row.latest_date,
+    oldest_large_ratio: numberOrZero(row.oldest_large_ratio),
+    previous_large_ratio: numberOrZero(row.previous_large_ratio),
+    latest_large_ratio: numberOrZero(row.latest_large_ratio),
+    previous_change_percentage_points: numberOrZero(
+      row.previous_change_percentage_points,
+    ),
+    latest_change_percentage_points: numberOrZero(
+      row.latest_change_percentage_points,
+    ),
+    large_holder_count: numberOrZero(row.large_holder_count),
+    large_share_count: numberOrZero(row.large_share_count),
+    retail_holder_count: numberOrZero(row.retail_holder_count),
+    retail_share_count: numberOrZero(row.retail_share_count),
+    retail_ratio: numberOrZero(row.retail_ratio),
   };
 }
 

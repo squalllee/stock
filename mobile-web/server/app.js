@@ -62,6 +62,15 @@ export function createApp({ dataService, staticDirectory = null }) {
     }
   });
 
+  app.get("/api/screeners/holder-turns", async (request, response, next) => {
+    try {
+      const items = await dataService.getHolderTurns(request.query.limit);
+      return response.json({ count: items.length, items });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   if (staticDirectory) {
     app.use(express.static(staticDirectory, {
       maxAge: "1h",

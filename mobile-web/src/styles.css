@@ -19,6 +19,7 @@
   --retail: #a9611b;
   --retail-soft: #fbefdf;
   --danger: #b83d51;
+  --danger-soft: #fae9ed;
   --shadow: 0 14px 34px rgba(34, 76, 69, 0.09);
   --radius-card: 18px;
   --radius-control: 12px;
@@ -244,7 +245,7 @@ a:focus-visible {
 
 .view-switcher {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   width: min(100%, 430px);
   margin-top: 26px;
@@ -496,6 +497,64 @@ a:focus-visible {
   border-color: var(--accent);
   color: #ffffff;
   background: var(--accent);
+}
+
+.turn-type-switcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 20px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface-soft);
+}
+
+.turn-type-switcher button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  gap: 12px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.turn-type-switcher button:active {
+  transform: scale(0.98);
+}
+
+.turn-type-switcher button strong {
+  color: var(--ink-soft);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-type-switcher button.sell-to-buy.active {
+  border-color: rgba(8, 127, 112, 0.2);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.turn-type-switcher button.sell-to-buy.active strong {
+  color: var(--accent);
+}
+
+.turn-type-switcher button.buy-to-sell.active {
+  border-color: rgba(184, 61, 81, 0.16);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.turn-type-switcher button.buy-to-sell.active strong {
+  color: var(--danger);
 }
 
 .range-options {
@@ -775,6 +834,110 @@ a:focus-visible {
   margin-left: auto;
   color: var(--accent);
   font-size: 12px;
+}
+
+.turn-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(8, 127, 112, 0.16);
+  border-radius: 13px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.turn-banner > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.turn-banner svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.turn-banner strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.turn-card.buy-to-sell .turn-banner {
+  border-color: rgba(184, 61, 81, 0.15);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.turn-card.buy-to-sell .turn-banner svg,
+.turn-card.buy-to-sell .turn-banner strong {
+  color: var(--danger);
+}
+
+.turn-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 13px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.turn-phase {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.turn-phase > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.turn-phase > strong {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-phase > small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-card.sell-to-buy .turn-phase:first-child > strong {
+  color: var(--danger);
+}
+
+.turn-card.sell-to-buy .turn-phase:last-child > strong {
+  color: var(--accent);
+}
+
+.turn-card.buy-to-sell .turn-phase:first-child > strong {
+  color: var(--accent);
+}
+
+.turn-card.buy-to-sell .turn-phase:last-child > strong {
+  color: var(--danger);
+}
+
+.turn-path-arrow {
+  color: var(--line-strong);
 }
 
 .definition-note {
@@ -1166,6 +1329,11 @@ a:focus-visible {
     width: 100%;
   }
 
+  .view-switcher button {
+    gap: 5px;
+    font-size: 11px;
+  }
+
   .content-section,
   .detail-section {
     margin-top: 28px;
@@ -1187,6 +1355,16 @@ a:focus-visible {
     grid-template-columns: 1fr;
     gap: 15px;
     padding: 16px;
+  }
+
+  .turn-type-switcher {
+    margin-top: 18px;
+  }
+
+  .turn-type-switcher button {
+    min-height: 45px;
+    padding: 0 11px;
+    font-size: 11px;
   }
 
   .week-options {

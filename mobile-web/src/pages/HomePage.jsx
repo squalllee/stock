@@ -1,7 +1,14 @@
-import { Search, SlidersHorizontal, TrendingUp, X } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Search,
+  SlidersHorizontal,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback.jsx";
+import HolderTurnCard from "../components/HolderTurnCard.jsx";
 import StockCard from "../components/StockCard.jsx";
 import { fetchJson } from "../lib/api.js";
 
@@ -17,6 +24,12 @@ export default function HomePage() {
   });
   const [weeks, setWeeks] = useState(3);
   const [screenState, setScreenState] = useState({
+    status: "idle",
+    items: [],
+    error: "",
+  });
+  const [turnType, setTurnType] = useState("sell_to_buy");
+  const [turnState, setTurnState] = useState({
     status: "idle",
     items: [],
     error: "",
@@ -64,9 +77,23 @@ export default function HomePage() {
     }
   }, [weeks]);
 
+  const loadHolderTurns = useCallback(async () => {
+    setTurnState((current) => ({ ...current, status: "loading", error: "" }));
+    try {
+      const payload = await fetchJson("/api/screeners/holder-turns?limit=100");
+      setTurnState({ status: "success", items: payload.items, error: "" });
+    } catch (error) {
+      setTurnState({ status: "error", items: [], error: error.message });
+    }
+  }, []);
+
   useEffect(() => {
     if (activeView === "screen") loadScreener();
   }, [activeView, loadScreener]);
+
+  useEffect(() => {
+    if (activeView === "turns") loadHolderTurns();
+  }, [activeView, loadHolderTurns]);
 
   function switchView(view) {
     setActiveView(view);
@@ -81,7 +108,7 @@ export default function HomePage() {
         <div className="hero-copy">
           <span className="eyebrow">TDCC / 每週資料</span>
           <h1 id="home-title">看懂大戶與散戶<br />持股變化</h1>
-          <p>直接查詢 TDCC 最新股權分散，找出大戶連續加碼的台股。</p>
+          <p>直接查詢 TDCC 最新股權分散，找出大戶加碼與買賣轉折的台股。</p>
         </div>
         <aside className="hero-brief" aria-label="資料口徑摘要">
           <div className="hero-brief-top">
@@ -91,6 +118,7 @@ export default function HomePage() {
           <dl>
             <div><dt>大戶</dt><dd>第 15 級距</dd></div>
             <div><dt>散戶</dt><dd>第 1～6 級距</dd></div>
+            <div><dt>動向</dt><dd>最近三期轉折</dd></div>
             <div><dt>查詢內容</dt><dd>比例與持股張數</dd></div>
           </dl>
         </aside>
@@ -116,6 +144,16 @@ export default function HomePage() {
         >
           <TrendingUp size={18} />
           連續增持
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "turns"}
+          className={activeView === "turns" ? "active" : ""}
+          onClick={() => switchView("turns")}
+        >
+          <ArrowLeftRight size={18} />
+          大戶動向
         </button>
       </div>
 
@@ -153,7 +191,7 @@ export default function HomePage() {
 
           <SearchResults state={searchState} query={query.trim()} />
         </section>
-      ) : (
+      ) : activeView === "screen" ? (
         <section className="content-section" aria-labelledby="screen-title">
           <div className="section-heading">
             <div>
@@ -183,6 +221,45 @@ export default function HomePage() {
           </div>
 
           <ScreenerResults state={screenState} weeks={weeks} onRetry={loadScreener} />
+        </section>
+      ) : (
+        <section className="content-section" aria-labelledby="turn-title">
+          <div className="section-heading">
+            <div>
+              <h2 id="turn-title">大戶買賣轉折</h2>
+              <p>比較最近三期大戶持股比例，找出由賣轉買或由買轉賣的股票。</p>
+            </div>
+            <ArrowLeftRight className="section-icon" size={20} aria-hidden="true" />
+          </div>
+
+          <div className="turn-type-switcher" role="tablist" aria-label="大戶動向方向">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={turnType === "sell_to_buy"}
+              className={turnType === "sell_to_buy" ? "active sell-to-buy" : "sell-to-buy"}
+              onClick={() => setTurnType("sell_to_buy")}
+            >
+              <span>由賣轉買</span>
+              <strong>{countTurns(turnState.items, "sell_to_buy")}</strong>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={turnType === "buy_to_sell"}
+              className={turnType === "buy_to_sell" ? "active buy-to-sell" : "buy-to-sell"}
+              onClick={() => setTurnType("buy_to_sell")}
+            >
+              <span>由買轉賣</span>
+              <strong>{countTurns(turnState.items, "buy_to_sell")}</strong>
+            </button>
+          </div>
+
+          <HolderTurnResults
+            state={turnState}
+            turnType={turnType}
+            onRetry={loadHolderTurns}
+          />
         </section>
       )}
 
@@ -247,6 +324,46 @@ function ScreenerResults({ state, weeks, onRetry }) {
       <div className="result-list">
         {state.items.map((stock) => (
           <StockCard key={stock.stock_code} stock={stock} screener />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function countTurns(items, turnType) {
+  return (items || []).filter((item) => item.turn_type === turnType).length;
+}
+
+function HolderTurnResults({ state, turnType, onRetry }) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <LoadingState label="正在整理大戶買賣轉折…" />;
+  }
+  if (state.status === "error") return <ErrorState message={state.error} onRetry={onRetry} />;
+
+  const items = state.items.filter((item) => item.turn_type === turnType);
+  const title = turnType === "sell_to_buy" ? "由賣轉買" : "由買轉賣";
+  const description = turnType === "sell_to_buy"
+    ? "前一期大戶持股下降，最新一期回升。"
+    : "前一期大戶持股上升，最新一期回落。";
+
+  if (!items.length) {
+    return (
+      <EmptyState
+        title={`目前沒有${title}的股票`}
+        description="需要連續三期 TDCC 資料，且前後方向必須明確改變。"
+      />
+    );
+  }
+
+  return (
+    <>
+      <div className="result-summary">
+        <div><span>{title}</span><strong>{items.length}</strong><span>檔</span></div>
+        <small>{description}</small>
+      </div>
+      <div className="result-list turn-list">
+        {items.map((stock) => (
+          <HolderTurnCard key={stock.stock_code} stock={stock} />
         ))}
       </div>
     </>

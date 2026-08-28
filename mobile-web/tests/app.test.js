@@ -10,6 +10,7 @@ function makeService(overrides = {}) {
     searchStocks: async () => [],
     getStockDetail: async () => null,
     getIncreasingStocks: async () => [],
+    getHolderTurns: async () => [],
     ...overrides,
   };
 }
@@ -84,5 +85,23 @@ describe("mobile web API", () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.count, 1);
     assert.deepEqual(receivedArguments, [3, "50"]);
+  });
+
+  it("returns holder direction turns", async () => {
+    let receivedArguments;
+    const dataService = makeService({
+      getHolderTurns: async (...args) => {
+        receivedArguments = args;
+        return [{ stock_code: "2330", turn_type: "sell_to_buy" }];
+      },
+    });
+    const response = await request(createApp({ dataService }))
+      .get("/api/screeners/holder-turns")
+      .query({ limit: 50 });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.count, 1);
+    assert.equal(response.body.items[0].turn_type, "sell_to_buy");
+    assert.deepEqual(receivedArguments, ["50"]);
   });
 });
