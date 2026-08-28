@@ -2,6 +2,21 @@ import express from "express";
 
 const STOCK_CODE_PATTERN = /^\d{4}$/;
 
+function readLargeHolderRange(query) {
+  const minLevel = Number.parseInt(query.largeLevelMin ?? "15", 10);
+  const maxLevel = Number.parseInt(query.largeLevelMax ?? "15", 10);
+  if (
+    !Number.isFinite(minLevel)
+    || !Number.isFinite(maxLevel)
+    || minLevel < 7
+    || maxLevel > 15
+    || minLevel > maxLevel
+  ) {
+    return null;
+  }
+  return { minLevel, maxLevel };
+}
+
 export function createApp({ dataService, staticDirectory = null }) {
   const app = express();
   app.disable("x-powered-by");
@@ -18,7 +33,16 @@ export function createApp({ dataService, staticDirectory = null }) {
       if (query.length > 30) {
         return response.status(400).json({ error: "搜尋文字不可超過 30 個字元。" });
       }
-      const items = await dataService.searchStocks(query, request.query.limit);
+      const range = readLargeHolderRange(request.query);
+      if (!range) {
+        return response.status(400).json({ error: "大戶持股級距不正確。" });
+      }
+      const items = await dataService.searchStocks(
+        query,
+        request.query.limit,
+        range.minLevel,
+        range.maxLevel,
+      );
       return response.json({ items });
     } catch (error) {
       return next(error);
@@ -31,9 +55,15 @@ export function createApp({ dataService, staticDirectory = null }) {
       if (!STOCK_CODE_PATTERN.test(stockCode)) {
         return response.status(400).json({ error: "股票代碼必須是 4 位數字。" });
       }
+      const range = readLargeHolderRange(request.query);
+      if (!range) {
+        return response.status(400).json({ error: "大戶持股級距不正確。" });
+      }
       const result = await dataService.getStockDetail(
         stockCode,
         request.query.weeks,
+        range.minLevel,
+        range.maxLevel,
       );
       if (!result) {
         return response.status(404).json({ error: "找不到這支股票。" });
@@ -52,9 +82,15 @@ export function createApp({ dataService, staticDirectory = null }) {
           .status(400)
           .json({ error: "連續週數必須介於 2 到 12 週。" });
       }
+      const range = readLargeHolderRange(request.query);
+      if (!range) {
+        return response.status(400).json({ error: "大戶持股級距不正確。" });
+      }
       const items = await dataService.getIncreasingStocks(
         weeks,
         request.query.limit,
+        range.minLevel,
+        range.maxLevel,
       );
       return response.json({ weeks, count: items.length, items });
     } catch (error) {
@@ -64,7 +100,15 @@ export function createApp({ dataService, staticDirectory = null }) {
 
   app.get("/api/screeners/holder-turns", async (request, response, next) => {
     try {
-      const items = await dataService.getHolderTurns(request.query.limit);
+      const range = readLargeHolderRange(request.query);
+      if (!range) {
+        return response.status(400).json({ error: "大戶持股級距不正確。" });
+      }
+      const items = await dataService.getHolderTurns(
+        request.query.limit,
+        range.minLevel,
+        range.maxLevel,
+      );
       return response.json({ count: items.length, items });
     } catch (error) {
       return next(error);

@@ -10,8 +10,9 @@ import {
   formatShortDate,
   marketLabel,
 } from "../lib/format.js";
+import { largeHolderQuery } from "../lib/holderRanges.js";
 
-export default function HolderTurnCard({ stock }) {
+export default function HolderTurnCard({ stock, largeHolderOption }) {
   const isSellToBuy = stock.turn_type === "sell_to_buy";
   const DirectionIcon = isSellToBuy ? TrendingUp : TrendingDown;
   const directionLabel = isSellToBuy ? "由賣轉買" : "由買轉賣";
@@ -21,7 +22,7 @@ export default function HolderTurnCard({ stock }) {
   return (
     <AppLink
       className={`stock-card turn-card ${isSellToBuy ? "sell-to-buy" : "buy-to-sell"}`}
-      to={`/stocks/${stock.stock_code}`}
+      to={`/stocks/${stock.stock_code}?${largeHolderQuery(largeHolderOption)}`}
     >
       <div className="stock-card-head">
         <div className="stock-identity">
@@ -75,7 +76,7 @@ export default function HolderTurnCard({ stock }) {
 
       <div className="holding-grid">
         <div className="holding-block holding-large">
-          <span>最新大戶持股</span>
+          <span>最新大戶持股 · {largeHolderOption.label}</span>
           <strong>{formatRatio(stock.latest_large_ratio)}</strong>
           <small>{formatLots(stock.large_share_count)}</small>
         </div>

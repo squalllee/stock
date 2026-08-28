@@ -24,18 +24,38 @@ export function createStockDataService(supabase) {
   }
 
   return {
-    async searchStocks(query, requestedLimit = 8) {
+    async searchStocks(
+      query,
+      requestedLimit = 8,
+      requestedLargeLevelMin = 15,
+      requestedLargeLevelMax = 15,
+    ) {
       const limit = clampInteger(requestedLimit, 1, MAX_SEARCH_LIMIT, 8);
+      const { minLevel, maxLevel } = normalizeLargeHolderLevels(
+        requestedLargeLevelMin,
+        requestedLargeLevelMax,
+      );
       const { data, error } = await supabase.rpc("search_tdcc_stocks", {
         p_query: query.trim(),
         p_limit: limit,
+        p_large_level_min: minLevel,
+        p_large_level_max: maxLevel,
       });
       if (error) throw new SupabaseQueryError("股票搜尋", error);
       return (data || []).map(normalizeSummary);
     },
 
-    async getStockDetail(stockCode, requestedWeeks = 26) {
+    async getStockDetail(
+      stockCode,
+      requestedWeeks = 26,
+      requestedLargeLevelMin = 15,
+      requestedLargeLevelMax = 15,
+    ) {
       const weeks = clampInteger(requestedWeeks, 2, MAX_DETAIL_WEEKS, 26);
+      const { minLevel, maxLevel } = normalizeLargeHolderLevels(
+        requestedLargeLevelMin,
+        requestedLargeLevelMax,
+      );
       const [stockResult, historyResult, priceRows] = await Promise.all([
         supabase
           .from("stocks")
@@ -45,6 +65,8 @@ export function createStockDataService(supabase) {
         supabase.rpc("get_tdcc_stock_detail", {
           p_stock_code: stockCode,
           p_weeks: MAX_DETAIL_WEEKS,
+          p_large_level_min: minLevel,
+          p_large_level_max: maxLevel,
         }),
         getPriceHistory(stockCode, weeks),
       ]);
@@ -70,7 +92,12 @@ export function createStockDataService(supabase) {
 
     getPriceHistory,
 
-    async getIncreasingStocks(requestedWeeks = 3, requestedLimit = 100) {
+    async getIncreasingStocks(
+      requestedWeeks = 3,
+      requestedLimit = 100,
+      requestedLargeLevelMin = 15,
+      requestedLargeLevelMax = 15,
+    ) {
       const weeks = clampInteger(requestedWeeks, 2, 12, 3);
       const limit = clampInteger(
         requestedLimit,
@@ -78,18 +105,37 @@ export function createStockDataService(supabase) {
         MAX_SCREENER_LIMIT,
         100,
       );
+      const { minLevel, maxLevel } = normalizeLargeHolderLevels(
+        requestedLargeLevelMin,
+        requestedLargeLevelMax,
+      );
       const { data, error } = await supabase.rpc(
         "get_tdcc_increasing_stocks",
-        { p_weeks: weeks, p_limit: limit },
+        {
+          p_weeks: weeks,
+          p_limit: limit,
+          p_large_level_min: minLevel,
+          p_large_level_max: maxLevel,
+        },
       );
       if (error) throw new SupabaseQueryError("連續增持篩選", error);
       return (data || []).map(normalizeScreenerRow);
     },
 
-    async getHolderTurns(requestedLimit = 100) {
+    async getHolderTurns(
+      requestedLimit = 100,
+      requestedLargeLevelMin = 15,
+      requestedLargeLevelMax = 15,
+    ) {
       const limit = clampInteger(requestedLimit, 1, MAX_TURN_LIMIT, 100);
+      const { minLevel, maxLevel } = normalizeLargeHolderLevels(
+        requestedLargeLevelMin,
+        requestedLargeLevelMax,
+      );
       const { data, error } = await supabase.rpc("get_tdcc_holder_turns", {
         p_limit: limit,
+        p_large_level_min: minLevel,
+        p_large_level_max: maxLevel,
       });
       if (error) throw new SupabaseQueryError("大戶動向篩選", error);
       return (data || []).map(normalizeTurnRow);
@@ -111,6 +157,14 @@ function normalizeSummary(row) {
     ...normalizeLatestPrice(row),
     ...normalizeHoldingRow(row),
   };
+}
+
+export function normalizeLargeHolderLevels(minimum, maximum) {
+  const minLevel = clampInteger(minimum, 7, 15, 15);
+  const maxLevel = clampInteger(maximum, 7, 15, 15);
+  return minLevel <= maxLevel
+    ? { minLevel, maxLevel }
+    : { minLevel: maxLevel, maxLevel: minLevel };
 }
 
 function normalizeHoldingRow(row) {

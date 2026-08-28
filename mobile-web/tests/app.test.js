@@ -30,7 +30,7 @@ describe("mobile web API", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.items[0].stock_code, "2330");
-    assert.deepEqual(receivedArguments, ["台積", "5"]);
+    assert.deepEqual(receivedArguments, ["台積", "5", 15, 15]);
   });
 
   it("rejects an invalid stock code", async () => {
@@ -61,7 +61,7 @@ describe("mobile web API", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.stock.stock_name, "台積電");
-    assert.deepEqual(receivedArguments, ["2330", "26"]);
+    assert.deepEqual(receivedArguments, ["2330", "26", 15, 15]);
   });
 
   it("validates screener week bounds", async () => {
@@ -86,7 +86,7 @@ describe("mobile web API", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.count, 1);
-    assert.deepEqual(receivedArguments, [3, "50"]);
+    assert.deepEqual(receivedArguments, [3, "50", 15, 15]);
   });
 
   it("returns holder direction turns", async () => {
@@ -104,6 +104,31 @@ describe("mobile web API", () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.count, 1);
     assert.equal(response.body.items[0].turn_type, "sell_to_buy");
-    assert.deepEqual(receivedArguments, ["50"]);
+    assert.deepEqual(receivedArguments, ["50", 15, 15]);
+  });
+
+  it("passes a selected large-holder range to screeners", async () => {
+    let receivedArguments;
+    const dataService = makeService({
+      getIncreasingStocks: async (...args) => {
+        receivedArguments = args;
+        return [];
+      },
+    });
+    const response = await request(createApp({ dataService }))
+      .get("/api/screeners/increasing")
+      .query({ weeks: 3, largeLevelMin: 14, largeLevelMax: 14 });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(receivedArguments, [3, undefined, 14, 14]);
+  });
+
+  it("rejects an invalid large-holder range", async () => {
+    const response = await request(createApp({ dataService: makeService() }))
+      .get("/api/stocks/search")
+      .query({ q: "2330", largeLevelMin: 15, largeLevelMax: 14 });
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /級距/);
   });
 });

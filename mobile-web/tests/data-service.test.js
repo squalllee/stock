@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { clampInteger, createStockDataService } from "../server/data-service.js";
+import {
+  clampInteger,
+  createStockDataService,
+  normalizeLargeHolderLevels,
+} from "../server/data-service.js";
 
 describe("stock data service", () => {
   it("clamps query limits", () => {
@@ -40,6 +44,17 @@ describe("stock data service", () => {
     assert.equal(rows[0].retail_holder_count, 3051385);
     assert.equal(rows[0].latest_price_date, "2026-08-27");
     assert.equal(rows[0].latest_close_price, 1160);
+  });
+
+  it("normalizes configurable large-holder level bounds", () => {
+    assert.deepEqual(normalizeLargeHolderLevels(14, 15), {
+      minLevel: 14,
+      maxLevel: 15,
+    });
+    assert.deepEqual(normalizeLargeHolderLevels(15, 14), {
+      minLevel: 14,
+      maxLevel: 15,
+    });
   });
 
   it("normalizes latest close prices for increasing-holder cards", async () => {
@@ -220,7 +235,12 @@ describe("stock data service", () => {
     assert.equal(detail.prices[0].trade_volume, 1000000);
     assert.deepEqual(rpcCalls[0], [
       "get_tdcc_stock_detail",
-      { p_stock_code: "2330", p_weeks: 104 },
+      {
+        p_stock_code: "2330",
+        p_weeks: 104,
+        p_large_level_min: 15,
+        p_large_level_max: 15,
+      },
     ]);
   });
 });

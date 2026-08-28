@@ -11,6 +11,12 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback.jsx
 import HolderTurnCard from "../components/HolderTurnCard.jsx";
 import StockCard from "../components/StockCard.jsx";
 import { fetchJson } from "../lib/api.js";
+import {
+  DEFAULT_LARGE_HOLDER_RANGE,
+  getLargeHolderOption,
+  LARGE_HOLDER_OPTIONS,
+  largeHolderQuery,
+} from "../lib/holderRanges.js";
 
 const WEEK_OPTIONS = [2, 3, 4, 5, 6, 8, 12];
 
@@ -23,6 +29,10 @@ export default function HomePage() {
     error: "",
   });
   const [weeks, setWeeks] = useState(3);
+  const [largeHolderRange, setLargeHolderRange] = useState(() => (
+    window.localStorage.getItem("large-holder-range")
+      || DEFAULT_LARGE_HOLDER_RANGE
+  ));
   const [screenState, setScreenState] = useState({
     status: "idle",
     items: [],
@@ -35,6 +45,12 @@ export default function HomePage() {
     error: "",
   });
   const searchInput = useRef(null);
+  const largeHolderOption = getLargeHolderOption(largeHolderRange);
+  const largeHolderParams = largeHolderQuery(largeHolderOption);
+
+  useEffect(() => {
+    window.localStorage.setItem("large-holder-range", largeHolderOption.value);
+  }, [largeHolderOption.value]);
 
   useEffect(() => {
     const value = query.trim();
@@ -48,7 +64,7 @@ export default function HomePage() {
       setSearchState((current) => ({ ...current, status: "loading", error: "" }));
       try {
         const payload = await fetchJson(
-          `/api/stocks/search?q=${encodeURIComponent(value)}&limit=10`,
+          `/api/stocks/search?q=${encodeURIComponent(value)}&limit=10&${largeHolderParams}`,
           { signal: controller.signal },
         );
         setSearchState({ status: "success", items: payload.items, error: "" });
@@ -63,29 +79,31 @@ export default function HomePage() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, largeHolderParams]);
 
   const loadScreener = useCallback(async () => {
     setScreenState((current) => ({ ...current, status: "loading", error: "" }));
     try {
       const payload = await fetchJson(
-        `/api/screeners/increasing?weeks=${weeks}&limit=100`,
+        `/api/screeners/increasing?weeks=${weeks}&limit=100&${largeHolderParams}`,
       );
       setScreenState({ status: "success", items: payload.items, error: "" });
     } catch (error) {
       setScreenState({ status: "error", items: [], error: error.message });
     }
-  }, [weeks]);
+  }, [weeks, largeHolderParams]);
 
   const loadHolderTurns = useCallback(async () => {
     setTurnState((current) => ({ ...current, status: "loading", error: "" }));
     try {
-      const payload = await fetchJson("/api/screeners/holder-turns?limit=100");
+      const payload = await fetchJson(
+        `/api/screeners/holder-turns?limit=100&${largeHolderParams}`,
+      );
       setTurnState({ status: "success", items: payload.items, error: "" });
     } catch (error) {
       setTurnState({ status: "error", items: [], error: error.message });
     }
-  }, []);
+  }, [largeHolderParams]);
 
   useEffect(() => {
     if (activeView === "screen") loadScreener();
@@ -116,7 +134,7 @@ export default function HomePage() {
             <strong>每週更新</strong>
           </div>
           <dl>
-            <div><dt>大戶</dt><dd>第 15 級距</dd></div>
+            <div><dt>大戶</dt><dd>{largeHolderOption.label}</dd></div>
             <div><dt>散戶</dt><dd>第 1～6 級距</dd></div>
             <div><dt>動向</dt><dd>最近三期轉折</dd></div>
             <div><dt>查詢內容</dt><dd>比例與持股張數</dd></div>
@@ -157,6 +175,24 @@ export default function HomePage() {
         </button>
       </div>
 
+      <section className="holder-range-panel" aria-labelledby="holder-range-title">
+        <div>
+          <strong id="holder-range-title">大戶統計範圍</strong>
+          <span>依 TDCC 公布的持股級距加總</span>
+        </div>
+        <label>
+          <span className="sr-only">選擇大戶持股張數範圍</span>
+          <select
+            value={largeHolderOption.value}
+            onChange={(event) => setLargeHolderRange(event.target.value)}
+          >
+            {LARGE_HOLDER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      </section>
+
       {activeView === "search" ? (
         <section className="content-section" aria-labelledby="search-title">
           <div className="section-heading">
@@ -189,7 +225,11 @@ export default function HomePage() {
             </div>
           </div>
 
-          <SearchResults state={searchState} query={query.trim()} />
+          <SearchResults
+            state={searchState}
+            query={query.trim()}
+            largeHolderOption={largeHolderOption}
+          />
         </section>
       ) : activeView === "screen" ? (
         <section className="content-section" aria-labelledby="screen-title">
@@ -220,7 +260,12 @@ export default function HomePage() {
             </div>
           </div>
 
-          <ScreenerResults state={screenState} weeks={weeks} onRetry={loadScreener} />
+          <ScreenerResults
+            state={screenState}
+            weeks={weeks}
+            onRetry={loadScreener}
+            largeHolderOption={largeHolderOption}
+          />
         </section>
       ) : (
         <section className="content-section" aria-labelledby="turn-title">
@@ -259,6 +304,7 @@ export default function HomePage() {
             state={turnState}
             turnType={turnType}
             onRetry={loadHolderTurns}
+            largeHolderOption={largeHolderOption}
           />
         </section>
       )}
@@ -266,7 +312,7 @@ export default function HomePage() {
       <footer className="definition-note">
         <strong>計算口徑</strong>
         <p>
-          大戶採 TDCC 第 15 級距（1,000,001 股以上，約 1,000 張以上）；
+          大戶目前採「{largeHolderOption.label}」級距；
           散戶為第 1～6 級距合計（30 張以下）。
         </p>
       </footer>
@@ -274,7 +320,7 @@ export default function HomePage() {
   );
 }
 
-function SearchResults({ state, query }) {
+function SearchResults({ state, query, largeHolderOption }) {
   if (!query) {
     return (
       <div className="search-prompt">
@@ -296,13 +342,19 @@ function SearchResults({ state, query }) {
         <small>點選查看明細</small>
       </div>
       <div className="result-list">
-        {state.items.map((stock) => <StockCard key={stock.stock_code} stock={stock} />)}
+        {state.items.map((stock) => (
+          <StockCard
+            key={stock.stock_code}
+            stock={stock}
+            largeHolderOption={largeHolderOption}
+          />
+        ))}
       </div>
     </>
   );
 }
 
-function ScreenerResults({ state, weeks, onRetry }) {
+function ScreenerResults({ state, weeks, onRetry, largeHolderOption }) {
   if (state.status === "loading" || state.status === "idle") {
     return <LoadingState label={`正在篩選連續 ${weeks} 週增持股票…`} />;
   }
@@ -323,7 +375,12 @@ function ScreenerResults({ state, weeks, onRetry }) {
       </div>
       <div className="result-list">
         {state.items.map((stock) => (
-          <StockCard key={stock.stock_code} stock={stock} screener />
+          <StockCard
+            key={stock.stock_code}
+            stock={stock}
+            screener
+            largeHolderOption={largeHolderOption}
+          />
         ))}
       </div>
     </>
@@ -334,7 +391,7 @@ function countTurns(items, turnType) {
   return (items || []).filter((item) => item.turn_type === turnType).length;
 }
 
-function HolderTurnResults({ state, turnType, onRetry }) {
+function HolderTurnResults({ state, turnType, onRetry, largeHolderOption }) {
   if (state.status === "loading" || state.status === "idle") {
     return <LoadingState label="正在整理大戶買賣轉折…" />;
   }
@@ -363,7 +420,11 @@ function HolderTurnResults({ state, turnType, onRetry }) {
       </div>
       <div className="result-list turn-list">
         {items.map((stock) => (
-          <HolderTurnCard key={stock.stock_code} stock={stock} />
+          <HolderTurnCard
+            key={stock.stock_code}
+            stock={stock}
+            largeHolderOption={largeHolderOption}
+          />
         ))}
       </div>
     </>

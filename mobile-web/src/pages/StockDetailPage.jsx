@@ -25,23 +25,32 @@ import {
   formatSignedRatio,
   marketLabel,
 } from "../lib/format.js";
+import { getLargeHolderOption, largeHolderQuery } from "../lib/holderRanges.js";
 
 const RANGE_OPTIONS = [12, 26, 52];
 
 export default function StockDetailPage({ stockCode }) {
   const [weeks, setWeeks] = useState(26);
+  const largeHolderOption = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return getLargeHolderOption(
+      `${params.get("largeLevelMin") || 15}-${params.get("largeLevelMax") || 15}`,
+    );
+  }, [stockCode]);
   const [state, setState] = useState({ status: "loading", data: null, error: "" });
 
   const loadDetail = useCallback(async () => {
     setState((current) => ({ ...current, status: "loading", error: "" }));
     try {
-      const payload = await fetchJson(`/api/stocks/${stockCode}?weeks=${weeks}`);
+      const payload = await fetchJson(
+        `/api/stocks/${stockCode}?weeks=${weeks}&${largeHolderQuery(largeHolderOption)}`,
+      );
       setState({ status: "success", data: payload, error: "" });
       document.title = `${payload.stock.stock_code} ${payload.stock.stock_name}｜籌碼週報`;
     } catch (error) {
       setState({ status: "error", data: null, error: error.message });
     }
-  }, [stockCode, weeks]);
+  }, [largeHolderOption, stockCode, weeks]);
 
   useEffect(() => {
     loadDetail();
@@ -86,7 +95,7 @@ export default function StockDetailPage({ stockCode }) {
           <section className="latest-grid" aria-label="最新持股摘要">
             <HoldingHero
               variant="large"
-              title="大戶持股"
+              title={`大戶持股 · ${largeHolderOption.label}`}
               ratio={latest.large_ratio}
               shares={latest.large_share_count}
               holders={latest.large_holder_count}
@@ -152,7 +161,7 @@ export default function StockDetailPage({ stockCode }) {
         <Info size={18} />
         <div>
           <strong>資料口徑</strong>
-          <p>大戶為 TDCC 第 15 級距；散戶為第 1～6 級距加總。持股張數由股數除以 1,000 計算。</p>
+          <p>大戶目前採「{largeHolderOption.label}」級距；散戶為第 1～6 級距加總。持股張數由股數除以 1,000 計算。</p>
         </div>
       </footer>
     </div>

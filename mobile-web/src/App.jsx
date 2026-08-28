@@ -8,9 +8,9 @@ import StockDetailPage from "./pages/StockDetailPage.jsx";
 export default function App() {
   const [path, setPath] = useState(window.location.pathname);
   const navigate = useCallback((nextPath) => {
-    if (nextPath === window.location.pathname) return;
+    if (nextPath === `${window.location.pathname}${window.location.search}`) return;
     window.history.pushState({}, "", nextPath);
-    setPath(nextPath);
+    setPath(window.location.pathname);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 

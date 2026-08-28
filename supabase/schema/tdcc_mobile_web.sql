@@ -7,12 +7,19 @@ create index if not exists idx_tdcc_distributions_date_level_stock
 -- function before changing its RETURNS TABLE shape; the surrounding
 -- transaction keeps the replacement atomic.
 drop function if exists public.search_tdcc_stocks(text, integer);
+drop function if exists public.search_tdcc_stocks(text, integer, integer, integer);
+drop function if exists public.get_tdcc_stock_detail(text, integer);
+drop function if exists public.get_tdcc_stock_detail(text, integer, integer, integer);
 drop function if exists public.get_tdcc_increasing_stocks(integer, integer);
+drop function if exists public.get_tdcc_increasing_stocks(integer, integer, integer, integer);
 drop function if exists public.get_tdcc_holder_turns(integer);
+drop function if exists public.get_tdcc_holder_turns(integer, integer, integer);
 
 create or replace function public.search_tdcc_stocks(
     p_query text,
-    p_limit integer default 8
+    p_limit integer default 8,
+    p_large_level_min integer default 15,
+    p_large_level_max integer default 15
 )
 returns table (
     stock_code text,
@@ -33,7 +40,14 @@ stable
 security invoker
 set search_path = public
 as $$
-    with matched as (
+    with parameters as (
+        select
+            least(greatest(coalesce(p_large_level_min, 15), 7), 15)
+                as large_level_min,
+            least(greatest(coalesce(p_large_level_max, 15), 7), 15)
+                as large_level_max
+    ),
+    matched as (
         select
             s.stock_code,
             s.stock_name,
@@ -67,14 +81,24 @@ as $$
         coalesce(latest.retail_share_count, 0),
         coalesce(latest.retail_ratio, 0)
     from matched
+    cross join parameters
     left join lateral (
         select
             d.data_date,
-            sum(d.shareholder_count) filter (where d.holding_level = 15)
+            sum(d.shareholder_count) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            )
                 as large_holder_count,
-            sum(d.share_count) filter (where d.holding_level = 15)
+            sum(d.share_count) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            )
                 as large_share_count,
-            sum(d.holding_ratio) filter (where d.holding_level = 15)
+            sum(d.holding_ratio) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            )
                 as large_ratio,
             sum(d.shareholder_count) filter (where d.holding_level between 1 and 6)
                 as retail_holder_count,
@@ -84,7 +108,11 @@ as $$
                 as retail_ratio
         from public.tdcc_distributions d
         where d.stock_code = matched.stock_code
-          and (d.holding_level between 1 and 6 or d.holding_level = 15)
+          and (
+              d.holding_level between 1 and 6
+              or d.holding_level between parameters.large_level_min
+                  and parameters.large_level_max
+          )
         group by d.data_date
         order by d.data_date desc
         limit 1
@@ -104,7 +132,9 @@ $$;
 
 create or replace function public.get_tdcc_stock_detail(
     p_stock_code text,
-    p_weeks integer default 26
+    p_weeks integer default 26,
+    p_large_level_min integer default 15,
+    p_large_level_max integer default 15
 )
 returns table (
     data_date date,
@@ -120,18 +150,34 @@ stable
 security invoker
 set search_path = public
 as $$
+    with parameters as (
+        select
+            least(greatest(coalesce(p_large_level_min, 15), 7), 15)
+                as large_level_min,
+            least(greatest(coalesce(p_large_level_max, 15), 7), 15)
+                as large_level_max
+    )
     select
         d.data_date,
         coalesce(
-            sum(d.shareholder_count) filter (where d.holding_level = 15),
+            sum(d.shareholder_count) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            ),
             0
         ) as large_holder_count,
         coalesce(
-            sum(d.share_count) filter (where d.holding_level = 15),
+            sum(d.share_count) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            ),
             0
         ) as large_share_count,
         coalesce(
-            sum(d.holding_ratio) filter (where d.holding_level = 15),
+            sum(d.holding_ratio) filter (
+                where d.holding_level between parameters.large_level_min
+                    and parameters.large_level_max
+            ),
             0
         ) as large_ratio,
         coalesce(
@@ -148,8 +194,13 @@ as $$
             0
         ) as retail_ratio
     from public.tdcc_distributions d
+    cross join parameters
     where d.stock_code = btrim(p_stock_code)
-      and (d.holding_level between 1 and 6 or d.holding_level = 15)
+      and (
+          d.holding_level between 1 and 6
+          or d.holding_level between parameters.large_level_min
+              and parameters.large_level_max
+      )
     group by d.data_date
     order by d.data_date desc
     limit least(greatest(coalesce(p_weeks, 26), 2), 104);
@@ -157,7 +208,9 @@ $$;
 
 create or replace function public.get_tdcc_increasing_stocks(
     p_weeks integer default 3,
-    p_limit integer default 100
+    p_limit integer default 100,
+    p_large_level_min integer default 15,
+    p_large_level_max integer default 15
 )
 returns table (
     stock_code text,
@@ -185,7 +238,11 @@ as $$
     with parameters as (
         select
             least(greatest(coalesce(p_weeks, 3), 2), 12) as weeks,
-            least(greatest(coalesce(p_limit, 100), 1), 200) as row_limit
+            least(greatest(coalesce(p_limit, 100), 1), 200) as row_limit,
+            least(greatest(coalesce(p_large_level_min, 15), 7), 15)
+                as large_level_min,
+            least(greatest(coalesce(p_large_level_max, 15), 7), 15)
+                as large_level_max
     ),
     latest_dates as (
         select distinct d.data_date
@@ -198,15 +255,27 @@ as $$
             d.stock_code,
             d.data_date,
             coalesce(
-                sum(d.shareholder_count) filter (where d.holding_level = 15),
+                sum(d.shareholder_count) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_holder_count,
             coalesce(
-                sum(d.share_count) filter (where d.holding_level = 15),
+                sum(d.share_count) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_share_count,
             coalesce(
-                sum(d.holding_ratio) filter (where d.holding_level = 15),
+                sum(d.holding_ratio) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_ratio,
             coalesce(
@@ -226,7 +295,9 @@ as $$
             ) as retail_ratio
         from public.tdcc_distributions d
         inner join latest_dates on latest_dates.data_date = d.data_date
-        where d.holding_level between 1 and 6 or d.holding_level = 15
+        where d.holding_level between 1 and 6
+           or d.holding_level between (select large_level_min from parameters)
+               and (select large_level_max from parameters)
         group by d.stock_code, d.data_date
     ),
     sequenced as (
@@ -310,7 +381,9 @@ as $$
 $$;
 
 create or replace function public.get_tdcc_holder_turns(
-    p_limit integer default 100
+    p_limit integer default 100,
+    p_large_level_min integer default 15,
+    p_large_level_max integer default 15
 )
 returns table (
     turn_type text,
@@ -339,7 +412,12 @@ security invoker
 set search_path = public
 as $$
     with parameters as (
-        select least(greatest(coalesce(p_limit, 100), 1), 200) as row_limit
+        select
+            least(greatest(coalesce(p_limit, 100), 1), 200) as row_limit,
+            least(greatest(coalesce(p_large_level_min, 15), 7), 15)
+                as large_level_min,
+            least(greatest(coalesce(p_large_level_max, 15), 7), 15)
+                as large_level_max
     ),
     latest_dates as (
         select distinct d.data_date
@@ -352,15 +430,27 @@ as $$
             d.stock_code,
             d.data_date,
             coalesce(
-                sum(d.shareholder_count) filter (where d.holding_level = 15),
+                sum(d.shareholder_count) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_holder_count,
             coalesce(
-                sum(d.share_count) filter (where d.holding_level = 15),
+                sum(d.share_count) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_share_count,
             coalesce(
-                sum(d.holding_ratio) filter (where d.holding_level = 15),
+                sum(d.holding_ratio) filter (
+                    where d.holding_level between
+                        (select large_level_min from parameters)
+                        and (select large_level_max from parameters)
+                ),
                 0
             ) as large_ratio,
             coalesce(
@@ -380,7 +470,9 @@ as $$
             ) as retail_ratio
         from public.tdcc_distributions d
         inner join latest_dates on latest_dates.data_date = d.data_date
-        where d.holding_level between 1 and 6 or d.holding_level = 15
+        where d.holding_level between 1 and 6
+           or d.holding_level between (select large_level_min from parameters)
+               and (select large_level_max from parameters)
         group by d.stock_code, d.data_date
     ),
     sequenced as (
@@ -549,36 +641,36 @@ as $$
     order by ranked.trade_date;
 $$;
 
-revoke all on function public.search_tdcc_stocks(text, integer)
+revoke all on function public.search_tdcc_stocks(text, integer, integer, integer)
     from public, anon, authenticated;
-revoke all on function public.get_tdcc_stock_detail(text, integer)
+revoke all on function public.get_tdcc_stock_detail(text, integer, integer, integer)
     from public, anon, authenticated;
-revoke all on function public.get_tdcc_increasing_stocks(integer, integer)
+revoke all on function public.get_tdcc_increasing_stocks(integer, integer, integer, integer)
     from public, anon, authenticated;
-revoke all on function public.get_tdcc_holder_turns(integer)
+revoke all on function public.get_tdcc_holder_turns(integer, integer, integer)
     from public, anon, authenticated;
 revoke all on function public.get_stock_price_history(text, integer)
     from public, anon, authenticated;
 
-grant execute on function public.search_tdcc_stocks(text, integer)
+grant execute on function public.search_tdcc_stocks(text, integer, integer, integer)
     to service_role;
-grant execute on function public.get_tdcc_stock_detail(text, integer)
+grant execute on function public.get_tdcc_stock_detail(text, integer, integer, integer)
     to service_role;
-grant execute on function public.get_tdcc_increasing_stocks(integer, integer)
+grant execute on function public.get_tdcc_increasing_stocks(integer, integer, integer, integer)
     to service_role;
-grant execute on function public.get_tdcc_holder_turns(integer)
+grant execute on function public.get_tdcc_holder_turns(integer, integer, integer)
     to service_role;
 grant execute on function public.get_stock_price_history(text, integer)
     to service_role;
 
-comment on function public.search_tdcc_stocks(text, integer) is
-    'Mobile web stock search with latest close and TDCC level 15 and level 1-6 summaries.';
-comment on function public.get_tdcc_stock_detail(text, integer) is
-    'Weekly TDCC large-holder and retail-holder history for one stock.';
-comment on function public.get_tdcc_increasing_stocks(integer, integer) is
-    'Stocks with latest close whose TDCC level 15 holding ratio strictly increased in every requested recent week.';
-comment on function public.get_tdcc_holder_turns(integer) is
-    'Stocks with latest close whose TDCC level 15 holding direction changed between the latest three weekly observations.';
+comment on function public.search_tdcc_stocks(text, integer, integer, integer) is
+    'Mobile web stock search with latest close and configurable TDCC large-holder levels.';
+comment on function public.get_tdcc_stock_detail(text, integer, integer, integer) is
+    'Weekly TDCC history with configurable large-holder levels for one stock.';
+comment on function public.get_tdcc_increasing_stocks(integer, integer, integer, integer) is
+    'Stocks whose configurable TDCC large-holder range strictly increased in every requested recent week.';
+comment on function public.get_tdcc_holder_turns(integer, integer, integer) is
+    'Stocks whose configurable TDCC large-holder range changed direction in the latest three observations.';
 comment on function public.get_stock_price_history(text, integer) is
     'Daily OHLC, volume and market average price history for one stock, with MA warmup rows.';
 

@@ -747,6 +747,67 @@ a:focus-visible {
   border-left: 1px solid var(--line);
 }
 
+.holder-range-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 15px 18px;
+  border: 1px solid rgba(8, 127, 112, 0.22);
+  border-radius: var(--radius-card);
+  background: var(--accent-soft);
+}
+
+.holder-range-panel > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.holder-range-panel strong {
+  color: var(--accent-deep);
+  font-size: 14px;
+}
+
+.holder-range-panel > div span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.holder-range-panel select {
+  min-width: 170px;
+  min-height: 42px;
+  padding: 0 38px 0 13px;
+  border: 1px solid rgba(8, 127, 112, 0.34);
+  border-radius: var(--radius-control);
+  outline: none;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.holder-range-panel select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(8, 127, 112, 0.12);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .stock-meta .stock-close {
   display: inline-flex;
   align-items: baseline;
@@ -1695,6 +1756,16 @@ a:focus-visible {
     grid-template-columns: 1fr;
     gap: 15px;
     padding: 16px;
+  }
+
+  .holder-range-panel {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .holder-range-panel select {
+    width: 100%;
   }
 
   .turn-type-switcher {

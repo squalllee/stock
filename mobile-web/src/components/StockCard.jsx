@@ -10,15 +10,19 @@ import {
   formatShortDate,
   marketLabel,
 } from "../lib/format.js";
+import { largeHolderQuery } from "../lib/holderRanges.js";
 
-export default function StockCard({ stock, screener = false }) {
+export default function StockCard({ stock, screener = false, largeHolderOption }) {
   const latestRatio = screener
     ? stock.latest_large_ratio
     : stock.large_ratio;
   const latestDate = screener ? stock.latest_date : stock.data_date;
 
   return (
-    <AppLink className="stock-card" to={`/stocks/${stock.stock_code}`}>
+    <AppLink
+      className="stock-card"
+      to={`/stocks/${stock.stock_code}?${largeHolderQuery(largeHolderOption)}`}
+    >
       <div className="stock-card-head">
         <div className="stock-identity">
           <strong>{stock.stock_code}</strong>
@@ -57,7 +61,7 @@ export default function StockCard({ stock, screener = false }) {
 
       <div className="holding-grid">
         <div className="holding-block holding-large">
-          <span className="holding-label">大戶持股</span>
+          <span className="holding-label">大戶持股 · {largeHolderOption.label}</span>
           <strong>{formatRatio(latestRatio)}</strong>
           <small>{formatLots(stock.large_share_count)}</small>
         </div>
