@@ -206,6 +206,7 @@ class InsiderTransferProvider:
         if source_dates:
             self.last_report_date = max(source_dates)
         records: list[InsiderTransaction] = []
+        seen_source_keys: set[str] = set()
         for index, row in enumerate(rows):
             record = self._normalize_row(row, index)
             if record is None:
@@ -214,6 +215,13 @@ class InsiderTransferProvider:
             if allowed and record.stock_code not in allowed:
                 self.last_skipped_count += 1
                 continue
+            if record.source_record_key in seen_source_keys:
+                # Some official feeds repeat an identical row.  Keep one
+                # normalized disclosure so a single upsert batch never sends
+                # the same conflict key more than once.
+                self.last_skipped_count += 1
+                continue
+            seen_source_keys.add(record.source_record_key)
             records.append(record)
 
         logger.info(
@@ -589,6 +597,7 @@ class InsiderHoldingHistoryProvider:
 
         report_date = date(year, month, monthrange(year, month)[1]).isoformat()
         records: list[InsiderTransaction] = []
+        seen_source_keys: set[str] = set()
         for row_index, row in enumerate(rows):
             record = self._normalize_row(
                 row,
@@ -603,7 +612,13 @@ class InsiderHoldingHistoryProvider:
             )
             if record is None:
                 self.last_skipped_count += 1
+            elif record.source_record_key in seen_source_keys:
+                # The MOPS table may repeat a person/role/holding row.  The
+                # natural source key below intentionally ignores row order,
+                # so collapse repeats before writing the batch.
+                self.last_skipped_count += 1
             else:
+                seen_source_keys.add(record.source_record_key)
                 records.append(record)
         return records
 
@@ -721,7 +736,6 @@ class InsiderHoldingHistoryProvider:
             "identity": identity,
             "name": name,
             "holding_type": holding_type,
-            "row_index": row_index,
         }
         raw_data = {
             "query_year": year,

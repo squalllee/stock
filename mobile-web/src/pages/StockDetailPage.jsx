@@ -205,7 +205,16 @@ function InsiderTransactions({ transactions }) {
 }
 
 function insiderCardKey(item) {
-  return `${item.source || "source"}-${item.report_date}-${item.insider_name}-${item.shares_changed}`;
+  return [
+    item.source || "source",
+    item.report_date,
+    item.report_type,
+    item.insider_name,
+    item.insider_role,
+    item.transfer_method,
+    item.shares_changed,
+    item.after_shares,
+  ].map((value) => String(value ?? "")).join("-");
 }
 
 function InsiderCard({ item }) {

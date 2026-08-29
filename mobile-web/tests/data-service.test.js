@@ -4,10 +4,69 @@ import { describe, it } from "node:test";
 import {
   clampInteger,
   createStockDataService,
+  deduplicateInsiderRows,
   normalizeLargeHolderLevels,
 } from "../server/data-service.js";
 
 describe("stock data service", () => {
+  it("merges repeated MOPS roles for the same holding snapshot", () => {
+    const rows = deduplicateInsiderRows([
+      {
+        report_date: "2026-07-31",
+        stock_code: "4931",
+        report_type: "after_report",
+        transaction_type: "other",
+        insider_name: "范貴鈞",
+        insider_role: "董事本人",
+        shares_changed: 0,
+        transfer_method: "普通股",
+        current_shares: 700000,
+        after_shares: 700000,
+      },
+      {
+        report_date: "2026-07-31",
+        stock_code: "4931",
+        report_type: "after_report",
+        transaction_type: "other",
+        insider_name: "范貴鈞",
+        insider_role: "財務部門主管本人",
+        shares_changed: 0,
+        transfer_method: "普通股",
+        current_shares: 816766,
+        after_shares: 816766,
+      },
+      {
+        report_date: "2026-07-31",
+        stock_code: "4931",
+        report_type: "after_report",
+        transaction_type: "other",
+        insider_name: "范貴鈞",
+        insider_role: "董事本人",
+        shares_changed: 0,
+        transfer_method: "普通股",
+        current_shares: 816766,
+        after_shares: 816766,
+      },
+      {
+        report_date: "2026-07-31",
+        stock_code: "4931",
+        report_type: "after_report",
+        transaction_type: "other",
+        insider_name: "范貴鈞",
+        insider_role: "董事本人",
+        shares_changed: 0,
+        transfer_method: "信託股",
+        current_shares: 100,
+        after_shares: 100,
+      },
+    ]);
+
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].insider_role, "董事本人、財務部門主管本人");
+    assert.equal(rows[0].after_shares, 700000);
+    assert.equal(rows[1].transfer_method, "信託股");
+  });
+
   it("clamps query limits", () => {
     assert.equal(clampInteger("0", 1, 20, 8), 1);
     assert.equal(clampInteger("999", 1, 20, 8), 20);
@@ -157,6 +216,76 @@ describe("stock data service", () => {
     assert.equal(rows[0].open_price, 100.5);
     assert.equal(rows[0].close_price, 102.5);
     assert.equal(rows[0].market_average_price, 101.234567);
+  });
+
+  it("deduplicates repeated insider snapshots returned by Supabase", async () => {
+    const supabase = {
+      from: () => ({
+        select() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        async limit(value) {
+          assert.equal(value, 100);
+          return {
+            data: [
+              {
+                report_date: "2026-07-31",
+                stock_code: "4931",
+                market: "TPEX",
+                report_type: "after_report",
+                transaction_type: "other",
+                insider_name: "范貴鈞",
+                insider_role: "董事本人",
+                shares_changed: "0",
+                source: "tpex_mops",
+                transfer_method: "普通股",
+                current_shares: "816766",
+                after_shares: "816766",
+              },
+              {
+                report_date: "2026-07-31",
+                stock_code: "4931",
+                market: "TPEX",
+                report_type: "after_report",
+                transaction_type: "other",
+                insider_name: "范貴鈞",
+                insider_role: "財務部門主管本人",
+                shares_changed: "0",
+                source: "tpex_mops",
+                transfer_method: "普通股",
+                current_shares: "816766",
+                after_shares: "816766",
+              },
+              {
+                report_date: "2026-07-30",
+                stock_code: "4931",
+                market: "TPEX",
+                report_type: "planned_transfer",
+                transaction_type: "transfer",
+                insider_name: "范貴鈞",
+                insider_role: "董事本人",
+                shares_changed: "1000",
+                source: "tpex_openapi",
+                planned_shares: "1000",
+              },
+            ],
+            error: null,
+          };
+        },
+      }),
+    };
+
+    const rows = await createStockDataService(supabase).getInsiderTransactions("4931");
+
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].insider_role, "董事本人、財務部門主管本人");
+    assert.equal(rows[1].report_type, "planned_transfer");
   });
 
   it("includes daily prices and insider transactions in stock detail", async () => {

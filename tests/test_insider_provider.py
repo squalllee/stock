@@ -157,6 +157,45 @@ def test_insider_holding_history_provider_queries_roc_months_and_normalizes_rows
     ]
 
 
+def test_insider_holding_history_provider_deduplicates_repeated_mops_rows():
+    row = [
+        "董事",
+        "王大明",
+        "自有",
+        "1,500",
+        "1,000",
+        "200",
+        "0",
+        "0",
+        "300",
+        "50",
+        "1,250",
+        "150",
+        "0",
+        "0",
+        "",
+    ]
+    client = _PostJsonClient(
+        [
+            {
+                "code": 200,
+                "result": {
+                    "titles": _mops_titles(),
+                    "data": [row, list(row)],
+                },
+            }
+        ]
+    )
+    provider = InsiderHoldingHistoryProvider(client, request_delay_seconds=0)
+
+    records = provider.fetch_year("2330", "TWSE", 2026, end_month=1)
+
+    assert len(records) == 1
+    assert provider.last_raw_record_count == 2
+    assert provider.last_skipped_count == 1
+    assert len(records[0].source_record_key) == 64
+
+
 def test_insider_holding_history_provider_skips_empty_mops_result():
     client = _PostJsonClient(
         [
