@@ -147,6 +147,8 @@ export default function StockDetailPage({ stockCode }) {
             <TrendChart history={history} annualBaselines={annualBaselines} />
           </section>
 
+          <InsiderTransactions transactions={insiderTransactions} />
+
           <section className="detail-section">
             <div className="section-heading compact">
               <div>
@@ -163,8 +165,6 @@ export default function StockDetailPage({ stockCode }) {
           </section>
         </>
       )}
-
-      <InsiderTransactions transactions={insiderTransactions} />
 
       <footer className="definition-note detail-definition">
         <Info size={18} />
