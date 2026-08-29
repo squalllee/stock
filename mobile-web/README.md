@@ -10,6 +10,7 @@
 - 連續 2～12 週大戶持股比例上升篩選。
 - 大戶由賣轉買、由買轉賣的方向轉折清單。
 - 個股每日股價 K 線、5／10／20 日移動平均線、成交量，以及以年度最低持股為基準的 12／26／52 週增幅長條圖與每週明細。
+- 個股公司內部人申報明細（事前預定轉讓與未轉讓通知）。
 
 Supabase Secret key 只由 Node.js 後端讀取，不會送到瀏覽器。程式會先讀取專案根目錄
 的 `.env`，也可使用本目錄的 `.env` 覆蓋設定。
@@ -44,4 +45,6 @@ Render 會自動提供 `PORT`，不需要另外設定埠號。
 
 資料庫需要先執行
 [`supabase/schema/tdcc_mobile_web.sql`](../supabase/schema/tdcc_mobile_web.sql)，
-建立搜尋、明細、連續增持、大戶動向與每日股價五個唯讀函式。
+建立搜尋、明細、連續增持、大戶動向與每日股價五個唯讀函式；另需建立
+[`supabase/schema/insider_transactions.sql`](../supabase/schema/insider_transactions.sql)，
+由 desktop.py 同步官方內部人申報後，個股頁才會顯示申報卡片。

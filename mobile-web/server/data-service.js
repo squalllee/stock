@@ -3,6 +3,7 @@ const MAX_DETAIL_WEEKS = 104;
 const MAX_PRICE_WEEKS = 104;
 const MAX_SCREENER_LIMIT = 200;
 const MAX_TURN_LIMIT = 200;
+const MAX_INSIDER_LIMIT = 100;
 
 export class SupabaseQueryError extends Error {
   constructor(operation, cause) {
@@ -21,6 +22,21 @@ export function createStockDataService(supabase) {
     });
     if (error) throw new SupabaseQueryError("股價歷史查詢", error);
     return (data || []).map(normalizePriceRow);
+  }
+
+  async function getInsiderTransactions(stockCode, requestedLimit = 60) {
+    const limit = clampInteger(requestedLimit, 1, MAX_INSIDER_LIMIT, 60);
+    const { data, error } = await supabase
+      .from("insider_transactions")
+      .select(
+        "report_date,stock_code,market,report_type,transaction_type,insider_name,insider_role,shares_changed,transfer_method,transferee,current_shares,planned_shares,after_shares,effective_period,reason",
+      )
+      .eq("stock_code", stockCode)
+      .order("report_date", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit);
+    if (error) throw new SupabaseQueryError("內部人申報查詢", error);
+    return (data || []).map(normalizeInsiderRow);
   }
 
   return {
@@ -56,7 +72,7 @@ export function createStockDataService(supabase) {
         requestedLargeLevelMin,
         requestedLargeLevelMax,
       );
-      const [stockResult, historyResult, priceRows] = await Promise.all([
+      const [stockResult, historyResult, priceRows, insiderRows] = await Promise.all([
         supabase
           .from("stocks")
           .select("stock_code,stock_name,market")
@@ -69,6 +85,7 @@ export function createStockDataService(supabase) {
           p_large_level_max: maxLevel,
         }),
         getPriceHistory(stockCode, weeks),
+        getInsiderTransactions(stockCode),
       ]);
 
       if (stockResult.error) {
@@ -87,10 +104,12 @@ export function createStockDataService(supabase) {
         history,
         annual_baselines: buildAnnualBaselines(fullHistory),
         prices: priceRows,
+        insider_transactions: insiderRows,
       };
     },
 
     getPriceHistory,
+    getInsiderTransactions,
 
     async getIncreasingStocks(
       requestedWeeks = 3,
@@ -244,6 +263,26 @@ function normalizePriceRow(row) {
     low_price: numberOrNull(row.low_price),
     close_price: numberOrNull(row.close_price),
     market_average_price: numberOrNull(row.market_average_price),
+  };
+}
+
+function normalizeInsiderRow(row) {
+  return {
+    report_date: row.report_date,
+    stock_code: row.stock_code,
+    market: row.market,
+    report_type: row.report_type,
+    transaction_type: row.transaction_type,
+    insider_name: row.insider_name,
+    insider_role: row.insider_role,
+    shares_changed: numberOrZero(row.shares_changed),
+    transfer_method: row.transfer_method || null,
+    transferee: row.transferee || null,
+    current_shares: numberOrNull(row.current_shares),
+    planned_shares: numberOrNull(row.planned_shares),
+    after_shares: numberOrNull(row.after_shares),
+    effective_period: row.effective_period || null,
+    reason: row.reason || null,
   };
 }
 

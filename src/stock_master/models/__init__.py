@@ -6,6 +6,7 @@ from .margin_estimate import (
     MarginEstimate,
 )
 from .margin_history import MarginHistory
+from .insider_transaction import InsiderTransaction
 from .price_history import PriceHistory, calculate_market_average_price
 from .stock import Stock
 from .tdcc_distribution import TDCCDistribution
@@ -15,6 +16,7 @@ __all__ = [
     "MarginCostEstimate",
     "MarginEstimate",
     "MarginHistory",
+    "InsiderTransaction",
     "PriceHistory",
     "Stock",
     "TDCCDistribution",

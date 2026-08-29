@@ -24,7 +24,7 @@ class FakeJsonClient:
 
 
 def load_fixture(name):
-    return json.loads((FIXTURES / name).read_text())
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def test_twse_price_provider_normalizes_daily_rows_and_skips_total():
@@ -45,6 +45,15 @@ def test_twse_price_provider_normalizes_daily_rows_and_skips_total():
     query = parse_qs(urlsplit(client.urls[0]).query)
     assert query["date"] == ["20260807"]
     assert query["type"] == ["ALLBUT0999"]
+
+
+def test_twse_price_provider_reads_latest_api_date():
+    client = FakeJsonClient({"stat": "OK", "date": "20260828"})
+
+    result = TWSEPriceProvider(client).fetch_latest_data_date()
+
+    assert result == "2026-08-28"
+    assert "date" not in parse_qs(urlsplit(client.urls[0]).query)
 
 
 def test_tpex_price_provider_normalizes_lots_and_thousand_twd_and_caches_month():
@@ -157,3 +166,16 @@ def test_tpex_price_provider_latest_uses_market_wide_endpoint():
         "https://www.tpex.org.tw/openapi/v1/"
         "tpex_mainboard_daily_close_quotes"
     ]
+
+
+def test_tpex_price_provider_reads_latest_api_date_without_stock_universe():
+    client = FakeJsonClient(
+        [
+            {"Date": "1150828", "SecuritiesCompanyCode": "3105"},
+            {"Date": "1150828", "SecuritiesCompanyCode": "6488"},
+        ]
+    )
+
+    result = TPExPriceProvider(client).fetch_latest_data_date()
+
+    assert result == "2026-08-28"

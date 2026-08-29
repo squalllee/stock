@@ -54,6 +54,15 @@ def test_tdcc_provider_parses_and_filters_bulk_records():
     assert len(client.urls) == 1
 
 
+def test_tdcc_provider_reads_latest_open_data_date():
+    payload = fixture_payload()
+    payload.append({**payload[0], "資料日期": "20260814"})
+
+    provider = TDCCDistributionProvider(FakeJsonClient(payload))
+
+    assert provider.fetch_latest_data_date() == "2026-08-14"
+
+
 def test_tdcc_provider_excludes_total_and_tracks_count():
     provider = TDCCDistributionProvider(FakeJsonClient(fixture_payload()))
 

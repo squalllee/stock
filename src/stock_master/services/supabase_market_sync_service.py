@@ -40,12 +40,19 @@ from stock_master.exceptions import (
     StockProviderError,
     SupabaseSyncError,
 )
-from stock_master.models import PriceHistory, Stock, TDCCDistribution
+from stock_master.models import (
+    InsiderTransaction,
+    PriceHistory,
+    Stock,
+    TDCCDistribution,
+)
 from stock_master.providers import (
     JsonHttpClient,
     TDCCHistoricalDistributionProvider,
     TDCCHistoricalQueryResult,
     TDCCDistributionProvider,
+    InsiderTransferProvider,
+    InsiderUntransferredProvider,
     TextHttpClient,
     TPExPriceProvider,
     TPExStockProvider,
@@ -379,6 +386,49 @@ class _SupabaseTDCCRepository:
         )
 
 
+class _SupabaseInsiderRepository:
+    """Repository adapter for normalized insider disclosure rows."""
+
+    TABLE_NAME = "insider_transactions"
+
+    def __init__(self, writer: _SupabaseBatchWriter) -> None:
+        self.writer = writer
+
+    def upsert_many(
+        self, transactions: Iterable[InsiderTransaction]
+    ) -> SupabaseUpsertStats:
+        synced_at = _utc_now()
+        values = [
+            {
+                "report_date": transaction.report_date,
+                "stock_code": transaction.stock_code,
+                "market": transaction.market,
+                "report_type": transaction.report_type,
+                "transaction_type": transaction.transaction_type,
+                "insider_name": transaction.insider_name,
+                "insider_role": transaction.insider_role,
+                "shares_changed": transaction.shares_changed,
+                "source": transaction.source,
+                "source_record_key": transaction.source_record_key,
+                "transfer_method": transaction.transfer_method,
+                "transferee": transaction.transferee,
+                "current_shares": transaction.current_shares,
+                "planned_shares": transaction.planned_shares,
+                "after_shares": transaction.after_shares,
+                "effective_period": transaction.effective_period,
+                "reason": transaction.reason,
+                "raw_data": dict(transaction.raw_data),
+                "updated_at": synced_at,
+            }
+            for transaction in transactions
+        ]
+        return self.writer.upsert(
+            self.TABLE_NAME,
+            values,
+            on_conflict="source,source_record_key",
+        )
+
+
 class _SupabaseTDCCCheckpointRepository:
     """Persist completed historical stock/date queries for safe resume."""
 
@@ -557,6 +607,63 @@ class SupabaseMarketSyncService:
             service,
             request_delay_seconds=DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
         ).sync(start_date, end_date)
+
+    def sync_insider_transactions(self) -> dict[str, object]:
+        """Fetch the current TWSE/TPEx insider disclosure feeds.
+
+        The feeds are published for the whole market.  We still read the
+        Supabase stock master first and filter by those codes before writing,
+        so delisted/unsupported instruments never enter the mobile-web data
+        set.  Both planned transfers and subsequent non-transfer notices are
+        retained with an explicit ``report_type``.
+        """
+
+        stocks = self.universe.get_all()
+        stock_codes = {stock.stock_code for stock in stocks}
+        client = _json_client()
+        providers = (
+            InsiderTransferProvider(client, market="TWSE"),
+            InsiderUntransferredProvider(client, market="TWSE"),
+            InsiderTransferProvider(client, market="TPEX"),
+            InsiderUntransferredProvider(client, market="TPEX"),
+        )
+        transactions: list[InsiderTransaction] = []
+        latest_dates: list[str] = []
+        source_counts: dict[str, int] = {}
+        for provider in providers:
+            rows = provider.fetch(stock_codes)
+            transactions.extend(rows)
+            if provider.last_report_date:
+                latest_dates.append(provider.last_report_date)
+            source_counts[provider.market] = source_counts.get(provider.market, 0) + len(rows)
+
+        if not transactions:
+            logger.info("Official insider feeds contain no rows for Supabase stocks")
+            return {
+                "skipped": True,
+                "reason": "官方目前沒有符合股票主檔的內部人申報資料",
+                "latest_data_date": max(latest_dates) if latest_dates else None,
+                "record_count": 0,
+                "market_counts": source_counts,
+            }
+
+        stats = _SupabaseInsiderRepository(self.writer).upsert_many(transactions)
+        report_type_counts: dict[str, int] = {}
+        for transaction in transactions:
+            report_type_counts[transaction.report_type] = (
+                report_type_counts.get(transaction.report_type, 0) + 1
+            )
+        latest_date = max(transaction.report_date for transaction in transactions)
+        return {
+            "record_count": len(transactions),
+            "latest_data_date": max(latest_dates + [latest_date]),
+            "market_counts": source_counts,
+            "report_type_counts": report_type_counts,
+            "inserted_count": stats.inserted_count,
+            "updated_count": stats.updated_count,
+            "synced_count": stats.synced_count,
+            "batch_count": stats.batch_count,
+        }
 
     def sync_tdcc_latest(self) -> Any:
         """Fetch and upsert the latest TDCC levels 1-15 once per data date."""

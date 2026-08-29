@@ -79,6 +79,42 @@ class TPExPriceProvider(PriceProvider):
         self.last_raw_record_count = 0
         self.last_skipped_total_count = 0
 
+    def fetch_latest_data_date(self) -> str:
+        """Return the latest trade date exposed by the TPEx price API."""
+
+        if not self.latest_url:
+            raise StockDataValidationError(
+                "TPEx latest price endpoint is not configured."
+            )
+        payload = self.http_client.get_json(self.latest_url)
+        if not isinstance(payload, list):
+            raise StockDataValidationError(
+                "TPEx latest price response schema changed: expected a list."
+            )
+        if not payload:
+            raise StockDataValidationError("TPEx latest price response is empty.")
+
+        dates: set[str] = set()
+        for row_index, raw_record in enumerate(payload):
+            if not isinstance(raw_record, Mapping):
+                raise StockDataValidationError(
+                    "TPEx latest price response schema changed: row "
+                    f"{row_index} is not an object."
+                )
+            raw_date = self._required_field(
+                raw_record,
+                ("Date", "date", "資料日期"),
+                field="trade_date",
+                row_index=row_index,
+            )
+            dates.add(normalize_trade_date(raw_date, self.market))
+        if len(dates) != 1:
+            raise StockDataValidationError(
+                "TPEx latest price returned mixed trade dates: "
+                f"{', '.join(sorted(dates))}."
+            )
+        return dates.pop()
+
     def set_stock_codes(self, stock_codes: Iterable[str]) -> None:
         """Replace the code universe used for the next fetch."""
 

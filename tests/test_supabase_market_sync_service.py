@@ -6,7 +6,7 @@ import pytest
 
 import stock_master.services.supabase_market_sync_service as market_sync_module
 from stock_master.exceptions import StockDataValidationError, StockProviderError
-from stock_master.models import PriceHistory, TDCCDistribution
+from stock_master.models import InsiderTransaction, PriceHistory, TDCCDistribution
 from stock_master.providers import TDCCHistoricalQueryResult
 from stock_master.services.supabase_market_sync_service import (
     SupabaseMarketSyncService,
@@ -132,6 +132,80 @@ def test_supabase_adapters_upsert_normalized_price_and_tdcc_rows():
     assert client.upsert_calls[1][0] == "tdcc_distributions"
     assert client.upsert_calls[1][1][0]["holding_level"] == 1
     assert len(client.upsert_calls[1][1]) == 1
+
+
+def test_supabase_insider_sync_filters_to_stock_universe_and_upserts(monkeypatch):
+    client = _Client()
+    fetch_calls = []
+
+    class FakeProvider:
+        def __init__(self, _client, *, market, **kwargs):
+            self.market = market
+            self.report_type = kwargs.get("report_type", "planned_transfer")
+            self.last_report_date = "2026-08-28"
+
+        def fetch(self, stock_codes):
+            fetch_calls.append((self.market, self.report_type, set(stock_codes)))
+            if self.report_type == "untransferred":
+                return [
+                    InsiderTransaction(
+                        report_date="2026-08-28",
+                        stock_code="3105",
+                        market=self.market,
+                        report_type="untransferred",
+                        transaction_type="untransferred",
+                        insider_name="李小華",
+                        insider_role="經理人",
+                        shares_changed=100,
+                        source="tpex_openapi",
+                        source_record_key="key-untransferred",
+                    )
+                ]
+            return [
+                InsiderTransaction(
+                    report_date="2026-08-28",
+                    stock_code="2330",
+                    market=self.market,
+                    report_type="planned_transfer",
+                    transaction_type="transfer",
+                    insider_name="王小明",
+                    insider_role="董事",
+                    shares_changed=200,
+                    source=f"{self.market.casefold()}_openapi",
+                    source_record_key=f"key-{self.market}",
+                )
+            ]
+
+    class FakeTransferProvider(FakeProvider):
+        def __init__(self, client, *, market):
+            super().__init__(client, market=market, report_type="planned_transfer")
+
+    class FakeUntransferredProvider(FakeProvider):
+        def __init__(self, client, *, market):
+            super().__init__(client, market=market, report_type="untransferred")
+
+    monkeypatch.setattr(
+        market_sync_module, "InsiderTransferProvider", FakeTransferProvider
+    )
+    monkeypatch.setattr(
+        market_sync_module,
+        "InsiderUntransferredProvider",
+        FakeUntransferredProvider,
+    )
+    service = SupabaseMarketSyncService(client, batch_size=10, backoff_seconds=0)
+
+    result = service.sync_insider_transactions()
+
+    assert result["record_count"] == 4
+    assert result["latest_data_date"] == "2026-08-28"
+    assert result["report_type_counts"] == {
+        "planned_transfer": 2,
+        "untransferred": 2,
+    }
+    assert len(fetch_calls) == 4
+    assert all(codes == {"2330", "3105"} for _, _, codes in fetch_calls)
+    assert client.upsert_calls[-1][0] == "insider_transactions"
+    assert client.upsert_calls[-1][2] == "source,source_record_key"
 
 
 def test_supabase_tdcc_latest_skips_when_weekly_date_is_already_stored(

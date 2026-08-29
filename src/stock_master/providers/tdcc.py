@@ -340,6 +340,20 @@ class TDCCDistributionProvider:
         self.last_skipped_total_count = 0
         self.last_raw_record_count = 0
 
+    def fetch_latest_data_date(self) -> str:
+        """Return the newest data date currently exposed by TDCC Open Data."""
+
+        payload = self.http_client.get_json(self.url)
+        records = payload_records(payload, "TDCC")
+        ensure_non_empty(records, "TDCC distribution")
+        dates = {
+            normalize_data_date(
+                _required_value(record, DATA_DATE_FIELDS, "data_date", index)
+            )
+            for index, record in enumerate(records)
+        }
+        return max(dates)
+
     def fetch(self, stock_codes: set[str]) -> list[TDCCDistribution]:
         """Fetch the bulk feed once and keep only records in ``stock_codes``."""
 

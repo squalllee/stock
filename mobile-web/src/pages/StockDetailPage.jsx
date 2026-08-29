@@ -21,6 +21,7 @@ import {
   formatLots,
   formatPrice,
   formatRatio,
+  formatShares,
   formatShortDate,
   formatSignedPoints,
   formatSignedRatio,
@@ -73,6 +74,7 @@ export default function StockDetailPage({ stockCode }) {
     history,
     annual_baselines: annualBaselines = {},
     prices = [],
+    insider_transactions: insiderTransactions = [],
   } = state.data;
   return (
     <div className="page detail-page">
@@ -158,6 +160,8 @@ export default function StockDetailPage({ stockCode }) {
         </>
       )}
 
+      <InsiderTransactions transactions={insiderTransactions} />
+
       <footer className="definition-note detail-definition">
         <Info size={18} />
         <div>
@@ -166,6 +170,64 @@ export default function StockDetailPage({ stockCode }) {
         </div>
       </footer>
     </div>
+  );
+}
+
+function InsiderTransactions({ transactions }) {
+  return (
+    <section className="detail-section insider-section" aria-labelledby="insider-title">
+      <div className="section-heading compact">
+        <div>
+          <h2 id="insider-title">公司內部人申報</h2>
+          <p>依 Supabase 股票代號保存的 TWSE／TPEx 官方申報資料。</p>
+        </div>
+        <small className="section-meta">{transactions.length} 筆</small>
+      </div>
+      {transactions.length ? (
+        <div className="insider-list">
+          {transactions.map((item) => (
+            <article
+              className={`insider-card ${item.report_type}`}
+              key={`${item.source || "source"}-${item.report_date}-${item.insider_name}-${item.shares_changed}`}
+            >
+              <div className="insider-card-head">
+                <div>
+                  <strong>{formatDate(item.report_date)}</strong>
+                  <span className="insider-badge">
+                    {item.report_type === "untransferred" ? "未轉讓" : "事前申報"}
+                  </span>
+                </div>
+                <strong className="insider-kind">
+                  {item.report_type === "untransferred" ? "未完成" : "預定轉讓"}
+                </strong>
+              </div>
+              <div className="insider-card-body">
+                <div>
+                  <span>申報人</span>
+                  <strong>{item.insider_name}</strong>
+                  <small>{item.insider_role}</small>
+                </div>
+                <div>
+                  <span>股數</span>
+                  <strong>{formatLots(item.shares_changed)}</strong>
+                  <small>{formatShares(item.shares_changed)}</small>
+                </div>
+              </div>
+              <div className="insider-card-meta">
+                {item.transfer_method ? <span>方式：{item.transfer_method}</span> : null}
+                {item.effective_period ? <span>期間：{item.effective_period}</span> : null}
+                {item.reason ? <span>理由：{item.reason}</span> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="insider-empty">目前沒有這支股票的內部人申報資料。</p>
+      )}
+      <p className="insider-disclaimer">
+        事前申報是預定轉讓，不等同已成交；未轉讓列表示後續申報的未完成股數。
+      </p>
+    </section>
   );
 }
 

@@ -1,8 +1,9 @@
 # Taiwan Stock Master
 
 Taiwan Stock Master 會從臺灣證券交易所（TWSE）與證券櫃檯買賣中心（TPEx）的官方
-OpenAPI 取得資料。Windows 本機桌面同步介面會直接將股票主檔、每日成交行情與
-TDCC 資料寫入 Supabase BillDB；原有 SQLite 命令列流程保留給既有本機查詢功能。
+OpenAPI 取得資料。Windows 本機桌面同步介面會直接將股票主檔、每日成交行情、
+TDCC 與公司內部人申報寫入 Supabase BillDB；原有 SQLite 命令列流程保留給既有
+本機查詢功能。
 
 資料表只包含：
 
@@ -61,11 +62,16 @@ Python 安裝程式（python.org 的 Windows installer 預設包含），安裝�
 
     python -m stock_master desktop --supabase-url "https://你的專案.supabase.co"
 
-視窗提供四個操作：股票主檔、每日成交行情（可選日期區間，預設最近一日）、TDCC 最新一期，以及
-指定年份的 TDCC 歷史資料。所有資料直接寫入 Supabase BillDB 的 `stocks`、
-`price_history` 與 `tdcc_distributions`，不會寫入 SQLite；請先按「股票主檔」，
-再按每日成交行情或 TDCC。年度 TDCC 同步可能需要較長時間，視窗會顯示完成筆數
-或錯誤原因。
+視窗提供五個操作：股票主檔、每日成交行情（可選日期區間，預設最近一日）、TDCC 最新一期、
+指定年份的 TDCC 歷史資料，以及 TWSE／TPEx 公司內部人申報。所有資料直接寫入
+Supabase BillDB 的 `stocks`、`price_history`、`tdcc_distributions` 與
+`insider_transactions`，不會寫入 SQLite；請先按「股票主檔」，再按每日成交行情、
+TDCC 或內部人申報。視窗啟動時也會顯示 TDCC、每日行情與內部人申報 API 的最新資料日期。
+年度 TDCC 同步可能需要較長時間，視窗會顯示完成筆數或錯誤原因。
+
+內部人申報同步依 Supabase `stocks` 的股票代號篩選官方全市場 OpenAPI，保存「預定轉讓」
+與「未轉讓」兩種申報，並保留原始 JSON。這些資料是事前申報或未完成通知，不等同實際
+成交紀錄；`after_report` 類型預留給日後接入 MOPS 成交後申報。
 
 TDCC 每週更新一次；「TDCC 最新一期」會先比較 Supabase 中已存在的最大
 `data_date`，若官方資料日期沒有更新就略過，不重複同步同一週資料。年度同步則依
@@ -81,14 +87,16 @@ Supabase 批次寫入進度；同步完成或失敗後會保留最後結果。
 
 對應的 Supabase schema 位於
 [`supabase/schema/market_data.sql`](supabase/schema/market_data.sql)、
-[`supabase/schema/tdcc_distributions.sql`](supabase/schema/tdcc_distributions.sql) 與
-[`supabase/schema/tdcc_sync_checkpoints.sql`](supabase/schema/tdcc_sync_checkpoints.sql)。
+[`supabase/schema/tdcc_distributions.sql`](supabase/schema/tdcc_distributions.sql)、
+[`supabase/schema/tdcc_sync_checkpoints.sql`](supabase/schema/tdcc_sync_checkpoints.sql) 與
+[`supabase/schema/insider_transactions.sql`](supabase/schema/insider_transactions.sql)。
 
 ## Node.js 手機版籌碼網站
 
 [`mobile-web`](mobile-web) 是獨立的 React＋Node.js 手機版網站，可依股票代碼或
 名稱查詢大戶（TDCC 第 15 級）與散戶（第 1～6 級）持股比例、張數及戶數，也可
-篩選最近 2～12 週大戶持股比例每週持續增加的股票，再點進個股查看趨勢與明細。
+篩選最近 2～12 週大戶持股比例每週持續增加的股票，再點進個股查看趨勢、明細、
+收盤價與公司內部人申報。
 
 網站沿用專案根目錄 `.env` 的 `SUPABASE_SECRET_KEY`，金鑰只存在 Node.js 後端，
 不會送到瀏覽器。第一次使用先安裝套件並啟動：
@@ -99,7 +107,8 @@ Supabase 批次寫入進度；同步完成或失敗後會保留最後結果。
 
 瀏覽器開啟 `http://localhost:3000`。完整執行與正式模式說明請見
 [`mobile-web/README.md`](mobile-web/README.md)。資料庫查詢函式定義於
-[`supabase/schema/tdcc_mobile_web.sql`](supabase/schema/tdcc_mobile_web.sql)。
+[`supabase/schema/tdcc_mobile_web.sql`](supabase/schema/tdcc_mobile_web.sql)，內部人明細
+資料表定義於 [`supabase/schema/insider_transactions.sql`](supabase/schema/insider_transactions.sql)。
 
 安裝完成後也可以直接執行 `stock-master-desktop` 開啟同一個介面。
 
@@ -412,6 +421,10 @@ CLI 可覆寫：
 * TPEx margin history: https://www.tpex.org.tw/web/stock/margin_trading/margin_balance/margin_bal_result.php
 * TWSE price history: https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX
 * TPEx price history: https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock
+* TWSE insider planned transfers: https://openapi.twse.com.tw/v1/opendata/t187ap12_L
+* TWSE insider untransferred notices: https://openapi.twse.com.tw/v1/opendata/t187ap13_L
+* TPEx insider planned transfers: https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap12_O
+* TPEx insider untransferred notices: https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap13_O
 
 HTTP client 會設定 User-Agent、驗證 2xx status、解析 JSON，並對暫時性 HTTP／網路錯誤最多嘗試三次。
 

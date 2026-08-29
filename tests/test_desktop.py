@@ -11,6 +11,7 @@ from stock_master.desktop import (
     SyncSkipped,
     _default_price_date,
     build_parser,
+    format_insider_api_latest_dates,
     summarize_result,
 )
 from stock_master.config import load_project_dotenv
@@ -118,6 +119,89 @@ def test_desktop_tdcc_latest_turns_existing_weekly_data_into_skip(monkeypatch):
     result = desktop_module.sync_tdcc_latest(object())
 
     assert result == SyncSkipped("TDCC 最新一期資料已同步")
+
+
+def test_desktop_reads_latest_date_from_tdcc_open_data(monkeypatch):
+    calls = []
+
+    class FakeProvider:
+        def __init__(self, client, *, url):
+            calls.append((client, url))
+
+        def fetch_latest_data_date(self):
+            return "2026-08-21"
+
+    monkeypatch.setattr(desktop_module, "TDCCDistributionProvider", FakeProvider)
+
+    assert desktop_module.fetch_tdcc_open_data_latest_date() == "2026-08-21"
+    assert calls[0][1] == desktop_module.TDCC_API_URL
+
+
+def test_desktop_formats_daily_price_api_dates():
+    assert desktop_module.format_daily_price_api_latest_dates(
+        ("2026-08-28", "2026-08-28")
+    ) == "2026-08-28"
+    assert desktop_module.format_daily_price_api_latest_dates(
+        ("2026-08-28", "2026-08-27")
+    ) == "TWSE 2026-08-28｜TPEx 2026-08-27"
+
+
+def test_desktop_reads_latest_dates_from_daily_price_apis(monkeypatch):
+    class FakeTWSEProvider:
+        def __init__(self, client):
+            self.client = client
+
+        def fetch_latest_data_date(self):
+            return "2026-08-28"
+
+    class FakeTPExProvider:
+        def __init__(self, client):
+            self.client = client
+
+        def fetch_latest_data_date(self):
+            return "2026-08-28"
+
+    monkeypatch.setattr(desktop_module, "TWSEPriceProvider", FakeTWSEProvider)
+    monkeypatch.setattr(desktop_module, "TPExPriceProvider", FakeTPExProvider)
+
+    assert desktop_module.fetch_daily_price_api_latest_dates() == (
+        "2026-08-28",
+        "2026-08-28",
+    )
+
+
+def test_desktop_formats_insider_api_dates():
+    assert format_insider_api_latest_dates(("2026-08-28", "2026-08-28")) == (
+        "2026-08-28"
+    )
+    assert format_insider_api_latest_dates(("2026-08-28", "2026-08-27")) == (
+        "TWSE 2026-08-28｜TPEx 2026-08-27"
+    )
+
+
+def test_desktop_insider_wrapper_and_summary(monkeypatch):
+    calls = []
+
+    class FakeService:
+        def sync_insider_transactions(self):
+            calls.append(True)
+            return {
+                "record_count": 12,
+                "latest_data_date": "2026-08-28",
+                "report_type_counts": {
+                    "planned_transfer": 10,
+                    "untransferred": 2,
+                },
+            }
+
+    monkeypatch.setattr(desktop_module, "_market_service", lambda _: FakeService())
+
+    result = desktop_module.sync_insider_transactions(object())
+
+    assert calls == [True]
+    assert "內部人申報 12 筆" in summarize_result("insider-transactions", result)
+    assert "預定轉讓 10" in summarize_result("insider-transactions", result)
+
 
 
 def test_default_price_date_moves_weekend_back_to_friday():

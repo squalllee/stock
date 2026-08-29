@@ -53,6 +53,18 @@ TPEX_API_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 TDCC_API_URL = "https://openapi.tdcc.com.tw/v1/opendata/1-5"
 TDCC_HISTORY_URL = "https://www.tdcc.com.tw/portal/zh/smWeb/qryStock"
 TDCC_MAX_HOLDING_LEVEL = 15
+TWSE_INSIDER_TRANSFER_URL = (
+    "https://openapi.twse.com.tw/v1/opendata/t187ap12_L"
+)
+TWSE_INSIDER_UNTRANSFERRED_URL = (
+    "https://openapi.twse.com.tw/v1/opendata/t187ap13_L"
+)
+TPEX_INSIDER_TRANSFER_URL = (
+    "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap12_O"
+)
+TPEX_INSIDER_UNTRANSFERRED_URL = (
+    "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap13_O"
+)
 BILLDB_SUPABASE_URL = "https://vngtmamxhvcldecesfwh.supabase.co"
 DEFAULT_SUPABASE_TDCC_BATCH_SIZE = 500
 TWSE_MARGIN_URL = "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN"

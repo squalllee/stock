@@ -60,6 +60,28 @@ class TWSEPriceProvider(PriceProvider):
         self.last_raw_record_count = 0
         self.last_skipped_total_count = 0
 
+    def fetch_latest_data_date(self) -> str:
+        """Return the latest trade date exposed by the TWSE price API."""
+
+        request_url = build_query_url(
+            self.url,
+            {"response": "json", "type": "ALLBUT0999"},
+        )
+        payload = require_mapping_payload(
+            self.http_client.get_json(request_url), self.market
+        )
+        status = str(payload.get("stat", "")).strip()
+        if status.casefold() not in {"ok", "success"}:
+            raise StockDataValidationError(
+                f"TWSE price response returned unexpected status {status!r}."
+            )
+        raw_date = payload.get("date")
+        if raw_date in (None, ""):
+            raise StockDataValidationError(
+                "TWSE price response schema changed: missing response date."
+            )
+        return normalize_trade_date(raw_date, self.market)
+
     def fetch(self, trade_date: date | None = None) -> list[PriceHistory]:
         """Fetch a specified date, or the latest available TWSE date."""
 

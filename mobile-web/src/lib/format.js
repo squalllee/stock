@@ -41,6 +41,10 @@ export function formatLots(shares) {
   return `${integerFormatter.format(Number(shares || 0) / 1000)} 張`;
 }
 
+export function formatShares(shares) {
+  return `${integerFormatter.format(Number(shares || 0))} 股`;
+}
+
 export function formatAccounts(value) {
   return `${integerFormatter.format(Number(value || 0))} 戶`;
 }

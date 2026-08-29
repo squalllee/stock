@@ -12,6 +12,7 @@ import logging
 import os
 import queue
 import sys
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date, timedelta
@@ -22,10 +23,21 @@ from stock_master.config import (
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_RETRY_BACKOFF_SECONDS,
     DEFAULT_SUPABASE_TDCC_BATCH_SIZE,
+    DEFAULT_TIMEOUT_SECONDS,
+    DEFAULT_USER_AGENT,
+    TDCC_API_URL,
     load_project_dotenv,
 )
 
 from stock_master.exceptions import StockDataValidationError, SupabaseSyncError
+from stock_master.providers import (
+    InsiderTransferProvider,
+    InsiderUntransferredProvider,
+    JsonHttpClient,
+    TDCCDistributionProvider,
+    TPExPriceProvider,
+    TWSEPriceProvider,
+)
 from stock_master.services.supabase_market_sync_service import (
     SupabaseMarketSyncService,
 )
@@ -116,6 +128,84 @@ def sync_tdcc_year(supabase_client: Any, year: int) -> Any:
     return _market_service(supabase_client).sync_tdcc_year(year)
 
 
+def sync_insider_transactions(supabase_client: Any) -> Any:
+    """Synchronize official insider transfer disclosures into Supabase."""
+
+    result = _market_service(supabase_client).sync_insider_transactions()
+    if isinstance(result, Mapping) and result.get("skipped"):
+        return SyncSkipped(
+            str(result.get("reason") or "官方目前沒有新的內部人申報資料")
+        )
+    return result
+
+
+def fetch_tdcc_open_data_latest_date() -> str:
+    """Read the newest data date directly from the official TDCC Open Data API."""
+
+    client = JsonHttpClient(
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_MAX_ATTEMPTS,
+        backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    return TDCCDistributionProvider(
+        client,
+        url=TDCC_API_URL,
+    ).fetch_latest_data_date()
+
+
+def fetch_daily_price_api_latest_dates() -> tuple[str, str]:
+    """Read the latest dates from the two official daily-price APIs."""
+
+    client = JsonHttpClient(
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_MAX_ATTEMPTS,
+        backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    twse_date = TWSEPriceProvider(client).fetch_latest_data_date()
+    tpex_date = TPExPriceProvider(client).fetch_latest_data_date()
+    return twse_date, tpex_date
+
+
+def fetch_insider_api_latest_dates() -> tuple[str, str]:
+    """Read the newest report dates from TWSE and TPEx insider feeds."""
+
+    client = JsonHttpClient(
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_MAX_ATTEMPTS,
+        backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    twse_dates = (
+        InsiderTransferProvider(client, market="TWSE").fetch_latest_data_date(),
+        InsiderUntransferredProvider(client, market="TWSE").fetch_latest_data_date(),
+    )
+    tpex_dates = (
+        InsiderTransferProvider(client, market="TPEX").fetch_latest_data_date(),
+        InsiderUntransferredProvider(client, market="TPEX").fetch_latest_data_date(),
+    )
+    return max(twse_dates), max(tpex_dates)
+
+
+def format_daily_price_api_latest_dates(dates: tuple[str, str]) -> str:
+    """Format matching dates compactly and preserve a market mismatch."""
+
+    twse_date, tpex_date = dates
+    if twse_date == tpex_date:
+        return twse_date
+    return f"TWSE {twse_date}｜TPEx {tpex_date}"
+
+
+def format_insider_api_latest_dates(dates: tuple[str, str]) -> str:
+    """Format insider-feed dates while preserving a market mismatch."""
+
+    twse_date, tpex_date = dates
+    if twse_date == tpex_date:
+        return twse_date
+    return f"TWSE {twse_date}｜TPEx {tpex_date}"
+
+
 def _market_service(supabase_client: Any) -> SupabaseMarketSyncService:
     return SupabaseMarketSyncService(
         supabase_client,
@@ -173,6 +263,16 @@ def summarize_result(workflow: str, value: Any) -> str:
             f"本次查詢 {data.get('completed_query_count', 0):,} 組，"
             f"略過 {data.get('skipped_checkpoint_count', 0):,} 組"
         )
+    if workflow == "insider-transactions":
+        report_types = data.get("report_type_counts") or {}
+        planned_count = report_types.get("planned_transfer", 0)
+        untransferred_count = report_types.get("untransferred", 0)
+        return (
+            "完成：內部人申報 "
+            f"{data.get('record_count', 0):,} 筆（"
+            f"預定轉讓 {planned_count:,}、未轉讓 {untransferred_count:,}；"
+            f"最新 {data.get('latest_data_date') or '—'}）"
+        )
     return "完成：同步工作已完成"
 
 
@@ -184,6 +284,11 @@ class DesktopSyncApp:
         ("daily-prices", "每日成交行情", "同步選定日期區間"),
         ("tdcc-latest", "TDCC 最新一期", "同步官方最新股權分散"),
         ("tdcc-year", "TDCC 年度資料", "同步指定年度的每週資料"),
+        (
+            "insider-transactions",
+            "內部人申報",
+            "同步 TWSE + TPEx 預定轉讓／未轉讓",
+        ),
     )
 
     def __init__(self, root: Any, *, supabase_client: Any, supabase_url: str) -> None:
@@ -207,13 +312,20 @@ class DesktopSyncApp:
             value=self.default_price_date.isoformat()
         )
         self.status_var = tk.StringVar(value="準備就緒")
+        self.tdcc_open_data_date_var = tk.StringVar(value="查詢中……")
+        self.daily_price_api_date_var = tk.StringVar(value="查詢中……")
+        self.insider_api_date_var = tk.StringVar(value="查詢中……")
         self.detail_var = tk.StringVar(
-            value="請先同步股票主檔，再同步 TDCC 或每日成交行情。"
+            value="請先同步股票主檔，再同步 TDCC、每日成交行情或內部人申報。"
         )
         self._events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="desktop-sync",
+        )
+        self._metadata_executor = ThreadPoolExecutor(
+            max_workers=3,
+            thread_name_prefix="desktop-api-date",
         )
         self._running = False
         self._buttons: dict[str, Any] = {}
@@ -237,13 +349,16 @@ class DesktopSyncApp:
 
         self._configure_window()
         self._build_widgets()
+        self._refresh_tdcc_open_data_date()
+        self._refresh_daily_price_api_dates()
+        self._refresh_insider_api_dates()
         self.root.after(150, self._poll_events)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _configure_window(self) -> None:
         self.root.title("台股資料同步控制台")
-        self.root.geometry("760x560")
-        self.root.minsize(680, 480)
+        self.root.geometry("760x620")
+        self.root.minsize(680, 520)
         style = self.ttk.Style(self.root)
         try:
             style.theme_use("vista")
@@ -284,6 +399,30 @@ class DesktopSyncApp:
             text="使用環境變數 SUPABASE_SECRET_KEY（或 SUPABASE_SERVICE_ROLE_KEY）",
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        self.ttk.Label(supabase_frame, text="TDCC Open Data 最新資料日期").grid(
+            row=2, column=0, sticky="w", padx=(0, 12), pady=(5, 0)
+        )
+        self.ttk.Label(
+            supabase_frame,
+            textvariable=self.tdcc_open_data_date_var,
+            style="Subtitle.TLabel",
+        ).grid(row=2, column=1, sticky="w", pady=(5, 0))
+        self.ttk.Label(supabase_frame, text="每日行情 API 最新資料日期").grid(
+            row=3, column=0, sticky="w", padx=(0, 12), pady=(5, 0)
+        )
+        self.ttk.Label(
+            supabase_frame,
+            textvariable=self.daily_price_api_date_var,
+            style="Subtitle.TLabel",
+        ).grid(row=3, column=1, sticky="w", pady=(5, 0))
+        self.ttk.Label(supabase_frame, text="內部人申報 API 最新資料日期").grid(
+            row=4, column=0, sticky="w", padx=(0, 12), pady=(5, 0)
+        )
+        self.ttk.Label(
+            supabase_frame,
+            textvariable=self.insider_api_date_var,
+            style="Subtitle.TLabel",
+        ).grid(row=4, column=1, sticky="w", pady=(5, 0))
 
         action_frame = self.ttk.LabelFrame(frame, text="同步操作", padding=12)
         action_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
@@ -303,7 +442,7 @@ class DesktopSyncApp:
 
         price_date_row = self.ttk.Frame(action_frame)
         price_date_row.grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0)
+            row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0)
         )
         self.ttk.Label(price_date_row, text="每日成交行情日期：").pack(side="left")
         self.ttk.Label(price_date_row, text="起").pack(side="left", padx=(8, 3))
@@ -325,7 +464,7 @@ class DesktopSyncApp:
         ).pack(side="left", padx=(8, 0))
 
         year_row = self.ttk.Frame(action_frame)
-        year_row.grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
+        year_row.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
         self.ttk.Label(year_row, text="TDCC 年度資料的年份：").pack(side="left")
         self.ttk.Spinbox(
             year_row,
@@ -423,6 +562,9 @@ class DesktopSyncApp:
             "tdcc-year": lambda: sync_tdcc_year(
                 self.supabase_client, year or date.today().year
             ),
+            "insider-transactions": lambda: sync_insider_transactions(
+                self.supabase_client
+            ),
         }
         task = tasks[workflow]
         self._running = True
@@ -439,6 +581,27 @@ class DesktopSyncApp:
             )
         )
 
+    def _refresh_tdcc_open_data_date(self) -> None:
+        self.tdcc_open_data_date_var.set("查詢中……")
+        future = self._metadata_executor.submit(fetch_tdcc_open_data_latest_date)
+        future.add_done_callback(
+            lambda completed: self._events.put(("tdcc-open-data-date", completed))
+        )
+
+    def _refresh_daily_price_api_dates(self) -> None:
+        self.daily_price_api_date_var.set("查詢中……")
+        future = self._metadata_executor.submit(fetch_daily_price_api_latest_dates)
+        future.add_done_callback(
+            lambda completed: self._events.put(("daily-price-api-dates", completed))
+        )
+
+    def _refresh_insider_api_dates(self) -> None:
+        self.insider_api_date_var.set("查詢中……")
+        future = self._metadata_executor.submit(fetch_insider_api_latest_dates)
+        future.add_done_callback(
+            lambda completed: self._events.put(("insider-api-dates", completed))
+        )
+
     def _poll_events(self) -> None:
         try:
             while True:
@@ -448,6 +611,46 @@ class DesktopSyncApp:
                     if self._running:
                         self.detail_var.set(message)
                         self._append_log(message)
+                    continue
+
+                if event_type == "tdcc-open-data-date":
+                    try:
+                        latest_date = payload.result()
+                    except Exception as exc:  # noqa: BLE001 - keep startup usable
+                        logger.warning(
+                            "Could not read TDCC Open Data latest date: %s", exc
+                        )
+                        self.tdcc_open_data_date_var.set("讀取失敗")
+                    else:
+                        self.tdcc_open_data_date_var.set(latest_date)
+                    continue
+
+                if event_type == "daily-price-api-dates":
+                    try:
+                        latest_dates = payload.result()
+                    except Exception as exc:  # noqa: BLE001 - keep startup usable
+                        logger.warning(
+                            "Could not read daily price API latest dates: %s", exc
+                        )
+                        self.daily_price_api_date_var.set("讀取失敗")
+                    else:
+                        self.daily_price_api_date_var.set(
+                            format_daily_price_api_latest_dates(latest_dates)
+                        )
+                    continue
+
+                if event_type == "insider-api-dates":
+                    try:
+                        latest_dates = payload.result()
+                    except Exception as exc:  # noqa: BLE001 - keep startup usable
+                        logger.warning(
+                            "Could not read insider API latest dates: %s", exc
+                        )
+                        self.insider_api_date_var.set("讀取失敗")
+                    else:
+                        self.insider_api_date_var.set(
+                            format_insider_api_latest_dates(latest_dates)
+                        )
                     continue
 
                 if event_type != "complete":
@@ -497,6 +700,7 @@ class DesktopSyncApp:
         self._log_logger.removeHandler(self._terminal_log_handler)
         self._log_logger.setLevel(self._previous_log_level)
         self._executor.shutdown(wait=False, cancel_futures=True)
+        self._metadata_executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 
 

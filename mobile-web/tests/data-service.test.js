@@ -159,23 +159,60 @@ describe("stock data service", () => {
     assert.equal(rows[0].market_average_price, 101.234567);
   });
 
-  it("includes daily prices in stock detail", async () => {
+  it("includes daily prices and insider transactions in stock detail", async () => {
     const rpcCalls = [];
     const supabase = {
-      from: () => ({
-        select() {
-          return this;
-        },
-        eq() {
-          return this;
-        },
-        async maybeSingle() {
+      from: (table) => {
+        if (table === "stocks") {
           return {
-            data: { stock_code: "2330", stock_name: "台積電", market: "TWSE" },
-            error: null,
+            select() {
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            async maybeSingle() {
+              return {
+                data: { stock_code: "2330", stock_name: "台積電", market: "TWSE" },
+                error: null,
+              };
+            },
           };
-        },
-      }),
+        }
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          order() {
+            return this;
+          },
+          async limit() {
+            return {
+              data: [{
+                report_date: "2026-08-20",
+                stock_code: "2330",
+                market: "TWSE",
+                report_type: "planned_transfer",
+                transaction_type: "transfer",
+                insider_name: "王大明",
+                insider_role: "董事",
+                shares_changed: "250000",
+                transfer_method: "鉅額交易",
+                transferee: null,
+                current_shares: "1000000",
+                planned_shares: "250000",
+                after_shares: "750000",
+                effective_period: "2026/08/21~2026/09/20",
+                reason: "財務規劃",
+              }],
+              error: null,
+            };
+          },
+        };
+      },
       rpc: async (name, args) => {
         rpcCalls.push([name, args]);
         return {
@@ -233,6 +270,10 @@ describe("stock data service", () => {
     assert.equal(detail.annual_baselines["2026"].retail_ratio, 1.8);
     assert.equal(detail.prices[0].close_price, 103);
     assert.equal(detail.prices[0].trade_volume, 1000000);
+    assert.equal(detail.insider_transactions.length, 1);
+    assert.equal(detail.insider_transactions[0].shares_changed, 250000);
+    assert.equal(detail.insider_transactions[0].planned_shares, 250000);
+    assert.equal(detail.insider_transactions[0].reason, "財務規劃");
     assert.deepEqual(rpcCalls[0], [
       "get_tdcc_stock_detail",
       {
