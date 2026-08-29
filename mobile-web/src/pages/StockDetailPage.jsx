@@ -155,7 +155,11 @@ export default function StockDetailPage({ stockCode }) {
               </div>
               <small className="section-meta">{history.length} 期</small>
             </div>
-            <WeeklyHistory history={history} prices={prices} />
+            <WeeklyHistory
+              history={history}
+              prices={prices}
+              insiderTransactions={insiderTransactions}
+            />
           </section>
         </>
       )}
@@ -342,10 +346,14 @@ function roundTrendValue(value) {
   return Math.round(value * 10000) / 10000;
 }
 
-function WeeklyHistory({ history, prices }) {
+function WeeklyHistory({ history, prices, insiderTransactions }) {
   const closePricesByDate = useMemo(
     () => new Map(prices.map((item) => [item.trade_date, item.close_price])),
     [prices],
+  );
+  const insiderSnapshots = useMemo(
+    () => buildWeeklyInsiderSnapshots(history, insiderTransactions),
+    [history, insiderTransactions],
   );
 
   return (
@@ -354,13 +362,14 @@ function WeeklyHistory({ history, prices }) {
         const older = history[index + 1];
         const delta = older ? item.large_ratio - older.large_ratio : 0;
         const DeltaIcon = delta >= 0 ? TrendingUp : TrendingDown;
+        const insiderSnapshot = insiderSnapshots[index];
         return (
           <article className="week-row" key={item.data_date}>
             <div className="week-date">
               <strong>{formatShortDate(item.data_date)}</strong>
               <span>{item.data_date.slice(0, 4)}</span>
             </div>
-            <div className="week-main">
+            <div className={`week-main ${insiderTransactions.length ? "has-insider" : ""}`}>
               <div className="large">
                 <span>大戶</span>
                 <strong>{formatRatio(item.large_ratio)}</strong>
@@ -382,6 +391,21 @@ function WeeklyHistory({ history, prices }) {
                   {closePricesByDate.has(item.data_date) ? "元" : "當日無行情"}
                 </small>
               </div>
+              {insiderTransactions.length ? (
+                <div className={`insider ${insiderSnapshot ? "" : "empty"}`}>
+                  <span>內部人持股</span>
+                  <strong>
+                    {insiderSnapshot
+                      ? formatLots(insiderSnapshot.shares)
+                      : "無資料"}
+                  </strong>
+                  <small>
+                    {insiderSnapshot
+                      ? `${insiderSnapshot.holderCount} 人 · 申報 ${formatShortDate(insiderSnapshot.reportDate)}`
+                      : "尚無持股欄位"}
+                  </small>
+                </div>
+              ) : null}
             </div>
             <div className={`week-delta ${delta < 0 ? "down" : "up"}`} title="大戶比例週變化">
               <DeltaIcon size={14} />
@@ -392,4 +416,57 @@ function WeeklyHistory({ history, prices }) {
       })}
     </div>
   );
+}
+
+function buildWeeklyInsiderSnapshots(history, transactions) {
+  const snapshots = history.map(() => []);
+  if (!history.length || !transactions.length) return snapshots;
+
+  for (const transaction of transactions) {
+    const transactionTime = dateTime(transaction.report_date);
+    if (transactionTime === null) continue;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    history.forEach((item, index) => {
+      const weekTime = dateTime(item.data_date);
+      if (weekTime === null) return;
+      const distance = Math.abs(weekTime - transactionTime);
+      if (distance < nearestDistance) {
+        nearestIndex = index;
+        nearestDistance = distance;
+      }
+    });
+    snapshots[nearestIndex].push(transaction);
+  }
+
+  return snapshots.map((rows) => {
+    if (!rows.length) return null;
+    const latestByPerson = new Map();
+    [...rows]
+      .sort((left, right) => String(right.report_date).localeCompare(String(left.report_date)))
+      .forEach((row) => {
+        const key = row.insider_name || `${row.report_date}-${row.insider_role}`;
+        if (!latestByPerson.has(key)) latestByPerson.set(key, row);
+      });
+    const holdings = [...latestByPerson.values()].filter((row) =>
+      Number.isFinite(Number(row.current_shares ?? row.after_shares)),
+    );
+    if (!holdings.length) return null;
+    return {
+      shares: holdings.reduce(
+        (total, row) => total + Number(row.current_shares ?? row.after_shares),
+        0,
+      ),
+      holderCount: holdings.length,
+      reportDate: rows
+        .map((row) => row.report_date)
+        .sort((left, right) => String(right).localeCompare(String(left)))[0],
+    };
+  });
+}
+
+function dateTime(value) {
+  if (!value) return null;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(time) ? time : null;
 }
