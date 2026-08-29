@@ -227,6 +227,17 @@ describe("stock data service", () => {
                 insider_role: "大股東",
                 shares_changed: null,
                 planned_shares: null,
+              }, {
+                report_date: "2026-08-17",
+                stock_code: "2330",
+                market: "TWSE",
+                report_type: "after_report",
+                transaction_type: "other",
+                insider_name: "已無持股",
+                insider_role: "大股東",
+                shares_changed: "0",
+                current_shares: "1000",
+                after_shares: "0",
               }],
               error: null,
             };

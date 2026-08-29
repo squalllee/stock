@@ -290,8 +290,13 @@ function normalizeInsiderRow(row) {
 
 function shouldDisplayInsiderRow(row) {
   // A transfer disclosure without a positive transfer amount is not useful
-  // in the mobile card.  Keep monthly after-report holdings available even
-  // when their net change is zero, because those rows still carry a balance.
+  // in the mobile card.  The same rule applies to an after-report row whose
+  // ending balance is zero; there is no holding amount to show in that card.
+  if (row.report_type === "after_report") {
+    const endingShares = row.after_shares ?? row.current_shares ?? row.shares_changed;
+    const shares = Number(endingShares);
+    return Number.isFinite(shares) && shares > 0;
+  }
   if (row.report_type !== "planned_transfer" && row.report_type !== "untransferred") {
     return true;
   }
