@@ -1549,7 +1549,7 @@ a:focus-visible {
 
 .trend-baseline-values {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -1631,7 +1631,7 @@ a:focus-visible {
 
 .week-main {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1656,12 +1656,16 @@ a:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.week-main > div:first-child strong {
+.week-main > .large strong {
   color: var(--large);
 }
 
-.week-main > div:last-child strong {
+.week-main > .retail strong {
   color: var(--retail);
+}
+
+.week-main > .close-price strong {
+  color: var(--ink-soft);
 }
 
 .week-delta {

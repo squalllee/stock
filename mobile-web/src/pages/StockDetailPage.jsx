@@ -19,6 +19,7 @@ import {
   formatDate,
   formatIndex,
   formatLots,
+  formatPrice,
   formatRatio,
   formatShortDate,
   formatSignedPoints,
@@ -138,7 +139,7 @@ export default function StockDetailPage({ stockCode }) {
             <div className="section-heading compact">
               <div>
                 <h2>持股比例增幅</h2>
-                <p>每個年度的最低持股比例設為 1，只比較其後增加的幅度。</p>
+                <p>以每個年度的大戶最低持股比例為 1，比較其後增加的幅度。</p>
               </div>
             </div>
             <TrendChart history={history} annualBaselines={annualBaselines} />
@@ -152,7 +153,7 @@ export default function StockDetailPage({ stockCode }) {
               </div>
               <small className="section-meta">{history.length} 期</small>
             </div>
-            <WeeklyHistory history={history} />
+            <WeeklyHistory history={history} prices={prices} />
           </section>
         </>
       )}
@@ -190,17 +191,13 @@ function TrendChart({ history, annualBaselines }) {
         const year = item.data_date.slice(0, 4);
         const baseline = baselines[year];
         const largeIncrease = Math.max(0, item.large_ratio - baseline.large_ratio);
-        const retailIncrease = Math.max(0, item.retail_ratio - baseline.retail_ratio);
         return {
           ...item,
           label: formatShortDate(item.data_date),
           baseline_year: year,
           large_baseline: baseline.large_ratio,
-          retail_baseline: baseline.retail_ratio,
           large_increase: largeIncrease,
-          retail_increase: retailIncrease,
           large_index: roundTrendValue(largeIncrease + 1),
-          retail_index: roundTrendValue(retailIncrease + 1),
         };
       });
     },
@@ -213,21 +210,19 @@ function TrendChart({ history, annualBaselines }) {
 
   return (
     <>
-      <div className="chart-wrap holding-bar-chart" aria-label="大戶與散戶持股增幅指數長條圖">
+      <div className="chart-wrap holding-bar-chart" aria-label="大戶持股增幅指數長條圖">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={chartData}
             margin={{ top: 12, right: 2, left: -18, bottom: 0 }}
-            barCategoryGap="24%"
-            barGap={2}
+            barCategoryGap="12%"
           >
             <CartesianGrid stroke="rgba(89, 119, 119, .16)" vertical={false} />
             <XAxis dataKey="label" stroke="#71858a" tickLine={false} axisLine={false} minTickGap={24} fontSize={11} />
             <YAxis stroke="#71858a" tickLine={false} axisLine={false} fontSize={11} domain={[0, "auto"]} tickFormatter={formatIndex} />
             <Tooltip cursor={{ fill: "rgba(8, 127, 112, .05)" }} content={<ChartTooltip />} />
             <Legend iconType="square" wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-            <Bar name="大戶增幅指數" dataKey="large_index" fill="#078b78" radius={[4, 4, 0, 0]} maxBarSize={18} />
-            <Bar name="散戶增幅指數" dataKey="retail_index" fill="#bd6907" radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar name="大戶增幅指數" dataKey="large_index" fill="#078b78" radius={[5, 5, 0, 0]} maxBarSize={32} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -237,11 +232,6 @@ function TrendChart({ history, annualBaselines }) {
             <div className="large">
               <span>{latestYear} 大戶最低</span>
               <strong>{formatRatio(latestBaseline.large_ratio)}</strong>
-              <small>基準 1</small>
-            </div>
-            <div className="retail">
-              <span>{latestYear} 散戶最低</span>
-              <strong>{formatRatio(latestBaseline.retail_ratio)}</strong>
               <small>基準 1</small>
             </div>
           </div>
@@ -261,10 +251,6 @@ function ChartTooltip({ active, payload }) {
       <span className="large-dot">
         大戶指數 {formatIndex(row.large_index)}
         <small>實際 {formatRatio(row.large_ratio)}，較年度最低 {formatSignedPoints(row.large_increase)}</small>
-      </span>
-      <span className="retail-dot">
-        散戶指數 {formatIndex(row.retail_index)}
-        <small>實際 {formatRatio(row.retail_ratio)}，較年度最低 {formatSignedPoints(row.retail_increase)}</small>
       </span>
     </div>
   );
@@ -294,7 +280,12 @@ function roundTrendValue(value) {
   return Math.round(value * 10000) / 10000;
 }
 
-function WeeklyHistory({ history }) {
+function WeeklyHistory({ history, prices }) {
+  const closePricesByDate = useMemo(
+    () => new Map(prices.map((item) => [item.trade_date, item.close_price])),
+    [prices],
+  );
+
   return (
     <div className="week-list">
       {history.map((item, index) => {
@@ -308,18 +299,25 @@ function WeeklyHistory({ history }) {
               <span>{item.data_date.slice(0, 4)}</span>
             </div>
             <div className="week-main">
-              <div>
+              <div className="large">
                 <span>大戶</span>
                 <strong>{formatRatio(item.large_ratio)}</strong>
                 <small>
                   {formatLots(item.large_share_count)} · {formatAccounts(item.large_holder_count)}
                 </small>
               </div>
-              <div>
+              <div className="retail">
                 <span>散戶</span>
                 <strong>{formatRatio(item.retail_ratio)}</strong>
                 <small>
                   {formatLots(item.retail_share_count)} · {formatAccounts(item.retail_holder_count)}
+                </small>
+              </div>
+              <div className="close-price">
+                <span>收盤價</span>
+                <strong>{formatPrice(closePricesByDate.get(item.data_date))}</strong>
+                <small>
+                  {closePricesByDate.has(item.data_date) ? "元" : "當日無行情"}
                 </small>
               </div>
             </div>
