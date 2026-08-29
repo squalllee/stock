@@ -28,6 +28,7 @@ import {
   marketLabel,
 } from "../lib/format.js";
 import { getLargeHolderOption, largeHolderQuery } from "../lib/holderRanges.js";
+import { filterToLatestHoldingMonth } from "../lib/insider.js";
 
 const RANGE_OPTIONS = [12, 26, 52];
 
@@ -76,6 +77,7 @@ export default function StockDetailPage({ stockCode }) {
     prices = [],
     insider_transactions: insiderTransactions = [],
   } = state.data;
+  const visibleInsiderTransactions = filterToLatestHoldingMonth(insiderTransactions);
   return (
     <div className="page detail-page">
       <section className="detail-hero" aria-labelledby="detail-title">
@@ -147,7 +149,7 @@ export default function StockDetailPage({ stockCode }) {
             <TrendChart history={history} annualBaselines={annualBaselines} />
           </section>
 
-          <InsiderTransactions transactions={insiderTransactions} />
+          <InsiderTransactions transactions={visibleInsiderTransactions} />
 
           <section className="detail-section">
             <div className="section-heading compact">
@@ -183,7 +185,7 @@ function InsiderTransactions({ transactions }) {
       <div className="section-heading compact">
         <div>
           <h2 id="insider-title">公司內部人申報</h2>
-          <p>依 Supabase 股票代號保存的 TWSE／TPEx／MOPS 官方申報資料。</p>
+          <p>依 Supabase 股票代號保存；事後持股僅顯示最近一期月份，轉讓申報照官方資料保留。</p>
         </div>
         <small className="section-meta">{transactions.length} 筆</small>
       </div>
