@@ -311,12 +311,16 @@ function WeeklyHistory({ history }) {
               <div>
                 <span>大戶</span>
                 <strong>{formatRatio(item.large_ratio)}</strong>
-                <small>{formatLots(item.large_share_count)}</small>
+                <small>
+                  {formatLots(item.large_share_count)} · {formatAccounts(item.large_holder_count)}
+                </small>
               </div>
               <div>
                 <span>散戶</span>
                 <strong>{formatRatio(item.retail_ratio)}</strong>
-                <small>{formatLots(item.retail_share_count)}</small>
+                <small>
+                  {formatLots(item.retail_share_count)} · {formatAccounts(item.retail_holder_count)}
+                </small>
               </div>
             </div>
             <div className={`week-delta ${delta < 0 ? "down" : "up"}`} title="大戶比例週變化">
