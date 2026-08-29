@@ -2,7 +2,11 @@
 
 from .base import StockProvider
 from .http import JsonHttpClient, TextHttpClient
-from .insider import InsiderTransferProvider, InsiderUntransferredProvider
+from .insider import (
+    InsiderHoldingHistoryProvider,
+    InsiderTransferProvider,
+    InsiderUntransferredProvider,
+)
 from .price_base import PriceProvider
 from .tpex_price import TPExPriceProvider
 from .tpex_margin import TPExMarginProvider
@@ -21,6 +25,7 @@ __all__ = [
     "TextHttpClient",
     "InsiderTransferProvider",
     "InsiderUntransferredProvider",
+    "InsiderHoldingHistoryProvider",
     "StockProvider",
     "TWSEMarginProvider",
     "TPExMarginProvider",

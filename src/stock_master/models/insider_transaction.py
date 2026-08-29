@@ -12,8 +12,9 @@ class InsiderTransaction:
 
     The free TWSE/TPEx OpenAPI feeds are *pre-declarations*: they describe a
     planned transfer and a later non-transfer notice, not proof that a trade
-    was executed.  ``report_type`` keeps that distinction explicit so a later
-    MOPS after-report source can be stored in the same table safely.
+    was executed.  MOPS monthly balance rows use ``after_report`` and retain
+    both the previous and month-end holdings so the distinction remains
+    explicit in the shared table.
     """
 
     report_date: str
@@ -34,4 +35,3 @@ class InsiderTransaction:
     effective_period: str | None = None
     reason: str | None = None
     raw_data: Mapping[str, Any] = field(default_factory=dict)
-

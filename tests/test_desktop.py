@@ -203,6 +203,54 @@ def test_desktop_insider_wrapper_and_summary(monkeypatch):
     assert "預定轉讓 10" in summarize_result("insider-transactions", result)
 
 
+def test_desktop_insider_holdings_year_wrapper_and_summary(monkeypatch):
+    calls = []
+
+    class FakeService:
+        def sync_insider_holdings_year(self, year):
+            calls.append(year)
+            return {
+                "year": year,
+                "record_count": 240,
+                "stocks_with_data": 18,
+                "query_count": 144,
+                "latest_data_date": "2026-07-31",
+            }
+
+    monkeypatch.setattr(desktop_module, "_market_service", lambda _: FakeService())
+
+    result = desktop_module.sync_insider_holdings_year(object(), 2026)
+
+    assert calls == [2026]
+    assert summarize_result("insider-holdings-year", result) == (
+        "完成：內部人持股年度資料 2026 年 240 筆，涵蓋 18 支股票，"
+        "查詢 144 次，最新 2026-07-31"
+    )
+
+
+def test_desktop_workflows_include_current_year_insider_holdings_action():
+    workflow_keys = {key for key, _label, _description in desktop_module.DesktopSyncApp.WORKFLOWS}
+
+    assert "insider-holdings-year" in workflow_keys
+
+
+def test_desktop_insider_holdings_summary_reports_partial_timeouts():
+    summary = summarize_result(
+        "insider-holdings-year",
+        {
+            "year": 2026,
+            "record_count": 120,
+            "stocks_with_data": 9,
+            "query_count": 80,
+            "latest_data_date": "2026-07-31",
+            "failed_query_count": 2,
+        },
+    )
+
+    assert summary.startswith("部分完成：內部人持股年度資料")
+    assert "逾時／失敗 2 個月份（可重跑補齊）" in summary
+
+
 
 def test_default_price_date_moves_weekend_back_to_friday():
     assert _default_price_date(date(2026, 8, 23)) == date(2026, 8, 21)

@@ -18,6 +18,8 @@ from stock_master.config import (
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MIN_EXPECTED_TPEX_STOCKS,
     DEFAULT_MIN_EXPECTED_TWSE_STOCKS,
+    DEFAULT_INSIDER_HISTORY_REQUEST_DELAY_SECONDS,
+    DEFAULT_INSIDER_HISTORY_TIMEOUT_SECONDS,
     DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
     DEFAULT_RETRY_BACKOFF_SECONDS,
     DEFAULT_SUPABASE_TDCC_BATCH_SIZE,
@@ -28,6 +30,7 @@ from stock_master.config import (
     DEFAULT_TDCC_HISTORY_WORKERS,
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_USER_AGENT,
+    MOPS_INSIDER_HOLDINGS_URL,
     TDCC_API_URL,
     TDCC_HISTORY_URL,
     TPEX_API_URL,
@@ -47,6 +50,7 @@ from stock_master.models import (
     TDCCDistribution,
 )
 from stock_master.providers import (
+    InsiderHoldingHistoryProvider,
     JsonHttpClient,
     TDCCHistoricalDistributionProvider,
     TDCCHistoricalQueryResult,
@@ -542,11 +546,16 @@ class SupabaseMarketSyncService:
         batch_size: int = DEFAULT_SUPABASE_TDCC_BATCH_SIZE,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+        insider_history_request_delay_seconds: float = DEFAULT_INSIDER_HISTORY_REQUEST_DELAY_SECONDS,
         tdcc_history_stock_batch_size: int = DEFAULT_TDCC_HISTORY_STOCK_BATCH_SIZE,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if tdcc_history_stock_batch_size < 1:
             raise ValueError("tdcc_history_stock_batch_size must be at least one.")
+        if insider_history_request_delay_seconds < 0:
+            raise ValueError(
+                "insider_history_request_delay_seconds cannot be negative."
+            )
         self.writer = _SupabaseBatchWriter(
             supabase_client,
             batch_size=batch_size,
@@ -555,6 +564,10 @@ class SupabaseMarketSyncService:
             sleep=sleep,
         )
         self.universe = _SupabaseStockUniverse(supabase_client)
+        self.insider_history_request_delay_seconds = (
+            insider_history_request_delay_seconds
+        )
+        self._sleep = sleep
         self.tdcc_history_stock_batch_size = tdcc_history_stock_batch_size
 
     def sync_stock_master(self) -> Any:
@@ -663,6 +676,163 @@ class SupabaseMarketSyncService:
             "updated_count": stats.updated_count,
             "synced_count": stats.synced_count,
             "batch_count": stats.batch_count,
+        }
+
+    def sync_insider_holdings_year(
+        self,
+        year: int | None = None,
+    ) -> dict[str, object]:
+        """Synchronize MOPS monthly insider holdings for one calendar year.
+
+        The MOPS report is queried per Supabase stock and month.  Current-year
+        runs stop at the current month; a completed prior year covers all
+        twelve months.  Rows are written as ``after_report`` disclosures in
+        bounded batches so an interrupted run keeps all completed writes and
+        can be safely repeated.
+        """
+
+        today = date.today()
+        sync_year = today.year if year is None else year
+        if not isinstance(sync_year, int) or isinstance(sync_year, bool):
+            raise ValueError("內部人持股年度必須是整數")
+        if sync_year < 1912 or sync_year > today.year:
+            raise ValueError(
+                f"內部人持股年度必須介於 1912 到 {today.year} 之間"
+            )
+        end_month = today.month if sync_year == today.year else 12
+
+        stocks = self.universe.get_all()
+        provider = InsiderHoldingHistoryProvider(
+            _mops_json_client(),
+            url=MOPS_INSIDER_HOLDINGS_URL,
+            request_delay_seconds=self.insider_history_request_delay_seconds,
+            sleep=self._sleep,
+        )
+        repository = _SupabaseInsiderRepository(self.writer)
+        pending: list[InsiderTransaction] = []
+        record_count = 0
+        query_count = 0
+        no_data_month_count = 0
+        failed_query_count = 0
+        failed_stock_count = 0
+        failed_query_samples: list[str] = []
+        skipped_row_count = 0
+        stocks_with_data = 0
+        market_counts: dict[str, int] = {}
+        report_type_counts: dict[str, int] = {}
+        latest_data_date: str | None = None
+        inserted_count = 0
+        updated_count = 0
+        synced_count = 0
+        batch_count = 0
+
+        for stock_index, stock in enumerate(stocks, start=1):
+            records = provider.fetch_year(
+                stock.stock_code,
+                stock.market,
+                sync_year,
+                end_month=end_month,
+            )
+            query_count += provider.last_query_count
+            no_data_month_count += provider.last_no_data_count
+            failed_query_count += provider.last_failed_query_count
+            if provider.last_failed_query_count:
+                failed_stock_count += 1
+                for month in provider.last_failed_months:
+                    if len(failed_query_samples) >= 20:
+                        break
+                    failed_query_samples.append(
+                        f"{stock.stock_code}:{sync_year}-{month:02d}"
+                    )
+            skipped_row_count += provider.last_skipped_count
+            if records:
+                stocks_with_data += 1
+            for transaction in records:
+                record_count += 1
+                pending.append(transaction)
+                market_counts[transaction.market] = (
+                    market_counts.get(transaction.market, 0) + 1
+                )
+                report_type_counts[transaction.report_type] = (
+                    report_type_counts.get(transaction.report_type, 0) + 1
+                )
+                if (
+                    latest_data_date is None
+                    or transaction.report_date > latest_data_date
+                ):
+                    latest_data_date = transaction.report_date
+
+            if len(pending) >= self.writer.batch_size:
+                stats = repository.upsert_many(pending)
+                inserted_count += stats.inserted_count
+                updated_count += stats.updated_count
+                synced_count += stats.synced_count
+                batch_count += stats.batch_count
+                pending = []
+
+            if (
+                stock_index == 1
+                or stock_index % 25 == 0
+                or stock_index == len(stocks)
+            ):
+                logger.info(
+                    "MOPS insider annual sync progress: stocks=%s/%s queries=%s "
+                    "records=%s failed_queries=%s batches=%s",
+                    stock_index,
+                    len(stocks),
+                    query_count,
+                    record_count,
+                    failed_query_count,
+                    batch_count,
+                )
+
+        if pending:
+            stats = repository.upsert_many(pending)
+            inserted_count += stats.inserted_count
+            updated_count += stats.updated_count
+            synced_count += stats.synced_count
+            batch_count += stats.batch_count
+
+        if not record_count and not failed_query_count:
+            return {
+                "skipped": True,
+                "reason": f"MOPS {sync_year} 年目前沒有符合股票主檔的內部人持股資料",
+                "year": sync_year,
+                "end_month": end_month,
+                "stock_count": len(stocks),
+                "stocks_with_data": stocks_with_data,
+                "query_count": query_count,
+                "no_data_month_count": no_data_month_count,
+                "failed_query_count": 0,
+                "failed_stock_count": 0,
+                "failed_query_samples": [],
+                "skipped_row_count": skipped_row_count,
+                "record_count": 0,
+                "latest_data_date": latest_data_date,
+                "market_counts": market_counts,
+                "report_type_counts": report_type_counts,
+            }
+
+        return {
+            "year": sync_year,
+            "end_month": end_month,
+            "stock_count": len(stocks),
+            "stocks_with_data": stocks_with_data,
+            "query_count": query_count,
+            "no_data_month_count": no_data_month_count,
+            "failed_query_count": failed_query_count,
+            "failed_stock_count": failed_stock_count,
+            "failed_query_samples": failed_query_samples,
+            "partial": bool(failed_query_count),
+            "skipped_row_count": skipped_row_count,
+            "record_count": record_count,
+            "latest_data_date": latest_data_date,
+            "market_counts": market_counts,
+            "report_type_counts": report_type_counts,
+            "inserted_count": inserted_count,
+            "updated_count": updated_count,
+            "synced_count": synced_count,
+            "batch_count": batch_count,
         }
 
     def sync_tdcc_latest(self) -> Any:
@@ -920,6 +1090,17 @@ class SupabaseMarketSyncService:
 def _json_client() -> JsonHttpClient:
     return JsonHttpClient(
         timeout=DEFAULT_TIMEOUT_SECONDS,
+        max_attempts=DEFAULT_MAX_ATTEMPTS,
+        backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+
+
+def _mops_json_client() -> JsonHttpClient:
+    """Return a client with extra read time for the slower MOPS endpoint."""
+
+    return JsonHttpClient(
+        timeout=DEFAULT_INSIDER_HISTORY_TIMEOUT_SECONDS,
         max_attempts=DEFAULT_MAX_ATTEMPTS,
         backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
         user_agent=DEFAULT_USER_AGENT,

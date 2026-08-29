@@ -183,55 +183,77 @@ function InsiderTransactions({ transactions }) {
       <div className="section-heading compact">
         <div>
           <h2 id="insider-title">公司內部人申報</h2>
-          <p>依 Supabase 股票代號保存的 TWSE／TPEx 官方申報資料。</p>
+          <p>依 Supabase 股票代號保存的 TWSE／TPEx／MOPS 官方申報資料。</p>
         </div>
         <small className="section-meta">{transactions.length} 筆</small>
       </div>
       {transactions.length ? (
         <div className="insider-list">
           {transactions.map((item) => (
-            <article
-              className={`insider-card ${item.report_type}`}
-              key={`${item.source || "source"}-${item.report_date}-${item.insider_name}-${item.shares_changed}`}
-            >
-              <div className="insider-card-head">
-                <div>
-                  <strong>{formatDate(item.report_date)}</strong>
-                  <span className="insider-badge">
-                    {item.report_type === "untransferred" ? "未轉讓" : "事前申報"}
-                  </span>
-                </div>
-                <strong className="insider-kind">
-                  {item.report_type === "untransferred" ? "未完成" : "預定轉讓"}
-                </strong>
-              </div>
-              <div className="insider-card-body">
-                <div>
-                  <span>申報人</span>
-                  <strong>{item.insider_name}</strong>
-                  <small>{item.insider_role}</small>
-                </div>
-                <div>
-                  <span>股數</span>
-                  <strong>{formatLots(item.shares_changed)}</strong>
-                  <small>{formatShares(item.shares_changed)}</small>
-                </div>
-              </div>
-              <div className="insider-card-meta">
-                {item.transfer_method ? <span>方式：{item.transfer_method}</span> : null}
-                {item.effective_period ? <span>期間：{item.effective_period}</span> : null}
-                {item.reason ? <span>理由：{item.reason}</span> : null}
-              </div>
-            </article>
+            <InsiderCard key={insiderCardKey(item)} item={item} />
           ))}
         </div>
       ) : (
         <p className="insider-empty">目前沒有這支股票的內部人申報資料。</p>
       )}
       <p className="insider-disclaimer">
-        事前申報是預定轉讓，不等同已成交；未轉讓列表示後續申報的未完成股數。
+        事前申報是預定轉讓，不等同已成交；未轉讓列表示後續申報的未完成股數；
+        事後申報為 MOPS 月底持股資料。
       </p>
     </section>
+  );
+}
+
+function insiderCardKey(item) {
+  return `${item.source || "source"}-${item.report_date}-${item.insider_name}-${item.shares_changed}`;
+}
+
+function InsiderCard({ item }) {
+  const afterReport = item.report_type === "after_report";
+  const displayedShares = afterReport
+    ? item.after_shares ?? item.current_shares ?? item.shares_changed
+    : item.shares_changed;
+  return (
+    <article className={`insider-card ${item.report_type}`}>
+      <div className="insider-card-head">
+        <div>
+          <strong>{formatDate(item.report_date)}</strong>
+          <span className="insider-badge">
+            {afterReport
+              ? "事後申報"
+              : item.report_type === "untransferred"
+                ? "未轉讓"
+                : "事前申報"}
+          </span>
+        </div>
+        <strong className="insider-kind">
+          {afterReport
+            ? "月底持股"
+            : item.report_type === "untransferred"
+              ? "未完成"
+              : "預定轉讓"}
+        </strong>
+      </div>
+      <div className="insider-card-body">
+        <div>
+          <span>申報人</span>
+          <strong>{item.insider_name}</strong>
+          <small>{item.insider_role}</small>
+        </div>
+        <div>
+          <span>{afterReport ? "月底持股" : "股數"}</span>
+          <strong>{formatLots(displayedShares)}</strong>
+          <small>{formatShares(displayedShares)}</small>
+        </div>
+      </div>
+      <div className="insider-card-meta">
+        {item.transfer_method ? (
+          <span>{afterReport ? "持股種類" : "方式"}：{item.transfer_method}</span>
+        ) : null}
+        {item.effective_period ? <span>期間：{item.effective_period}</span> : null}
+        {item.reason ? <span>理由：{item.reason}</span> : null}
+      </div>
+    </article>
   );
 }
 
@@ -448,13 +470,18 @@ function buildWeeklyInsiderSnapshots(history, transactions) {
         const key = row.insider_name || `${row.report_date}-${row.insider_role}`;
         if (!latestByPerson.has(key)) latestByPerson.set(key, row);
       });
-    const holdings = [...latestByPerson.values()].filter((row) =>
-      Number.isFinite(Number(row.current_shares ?? row.after_shares)),
-    );
+    const holdings = [...latestByPerson.values()]
+      .map((row) => ({
+        shares:
+          row.report_type === "after_report"
+            ? row.after_shares ?? row.current_shares
+            : row.current_shares ?? row.after_shares,
+      }))
+      .filter((item) => Number.isFinite(Number(item.shares)));
     if (!holdings.length) return null;
     return {
       shares: holdings.reduce(
-        (total, row) => total + Number(row.current_shares ?? row.after_shares),
+        (total, item) => total + Number(item.shares),
         0,
       ),
       holderCount: holdings.length,

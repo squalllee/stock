@@ -1719,6 +1719,10 @@ a:focus-visible {
   border-left: 3px solid var(--retail);
 }
 
+.insider-card.after_report {
+  border-left: 3px solid var(--large);
+}
+
 .insider-card-head,
 .insider-card-head > div,
 .insider-card-body,
@@ -1756,12 +1760,21 @@ a:focus-visible {
   background: var(--retail-soft);
 }
 
+.after_report .insider-badge {
+  color: var(--large);
+  background: rgba(7, 139, 120, .1);
+}
+
 .insider-kind {
   color: var(--accent);
 }
 
 .untransferred .insider-kind {
   color: var(--retail);
+}
+
+.after_report .insider-kind {
+  color: var(--large);
 }
 
 .insider-card-body {

@@ -108,6 +108,41 @@ def test_http_client_sets_headers_and_decodes_json():
     assert request.get_header("Accept") == "application/json"
 
 
+def test_http_client_posts_json_with_expected_body_and_headers():
+    requests = []
+
+    def opener(request, timeout):
+        requests.append((request, timeout))
+        return FakeResponse({"code": 200})
+
+    client = JsonHttpClient(
+        timeout=11,
+        max_attempts=1,
+        opener=opener,
+        sleep=lambda _: None,
+    )
+
+    payload = {
+        "companyId": "2330",
+        "dataType": "2",
+        "year": "115",
+        "month": "01",
+        "subsidiaryCompanyId": "",
+    }
+    assert client.post_json("https://example.test/mops", payload) == {"code": 200}
+
+    request, timeout = requests[0]
+    assert timeout == 11
+    assert request.get_method() == "POST"
+    assert request.get_header("User-agent") == "taiwan-stock-master/0.1"
+    assert request.get_header("Accept") == "application/json"
+    assert request.get_header("Content-type") == "application/json"
+    assert request.data == (
+        b'{"companyId":"2330","dataType":"2","year":"115",'
+        b'"month":"01","subsidiaryCompanyId":""}'
+    )
+
+
 def test_text_http_client_sets_headers_and_encodes_form():
     requests = []
 

@@ -242,6 +242,118 @@ class JsonHttpClient:
             f"Request failed after {self.max_attempts} attempt(s): {url}: {detail}"
         ) from last_error
 
+    def post_json(self, url: str, payload: object) -> object:
+        """POST a JSON payload and return the decoded JSON response.
+
+        MOPS exposes the historical insider-holding query as a read-only POST
+        endpoint.  Keep the same bounded retry and TLS behaviour as
+        :meth:`get_json`; a failed response is retried with the identical body.
+        """
+
+        try:
+            body = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise StockProviderError(
+                f"Could not encode JSON payload for {url}: {exc}"
+            ) from exc
+
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            request = Request(
+                url,
+                data=body,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": self.user_agent,
+                },
+                method="POST",
+            )
+
+            try:
+                response = self._opener(request, timeout=self.timeout)
+                with response:
+                    status = getattr(response, "status", None)
+                    if status is None and hasattr(response, "getcode"):
+                        status = response.getcode()
+                    if status is not None and not 200 <= int(status) < 300:
+                        error = StockProviderError(
+                            f"HTTP status {status} returned by {url}"
+                        )
+                        if int(status) < 500 and int(status) != 429:
+                            raise error
+                        last_error = error
+                        logger.warning(
+                            "HTTP POST attempt %s/%s failed for %s: status=%s",
+                            attempt,
+                            self.max_attempts,
+                            url,
+                            status,
+                        )
+                    else:
+                        payload_bytes = response.read()
+                        if payload_bytes:
+                            payload_text = payload_bytes.decode("utf-8-sig")
+                            return json.loads(payload_text)
+            except StockProviderError:
+                raise
+            except HTTPError as exc:
+                last_error = exc
+                if (
+                    exc.code < 500
+                    and exc.code != 429
+                    and exc.code not in _RETRYABLE_REDIRECT_STATUS_CODES
+                ):
+                    break
+                logger.warning(
+                    "HTTP POST attempt %s/%s failed for %s: status=%s",
+                    attempt,
+                    self.max_attempts,
+                    url,
+                    exc.code,
+                )
+            except IncompleteRead as exc:
+                last_error = exc
+                logger.warning(
+                    "HTTP POST attempt %s/%s received an incomplete response "
+                    "for %s: %s",
+                    attempt,
+                    self.max_attempts,
+                    url,
+                    exc,
+                )
+            except (
+                RemoteDisconnected,
+                URLError,
+                TimeoutError,
+                OSError,
+            ) as exc:
+                last_error = exc
+                logger.warning(
+                    "HTTP POST attempt %s/%s failed for %s: %s",
+                    attempt,
+                    self.max_attempts,
+                    url,
+                    exc,
+                )
+            except (UnicodeDecodeError, JSONDecodeError) as exc:
+                raise StockProviderError(
+                    f"Invalid JSON response from {url}: {exc}"
+                ) from exc
+
+            if attempt < self.max_attempts:
+                self._sleep(self.backoff_seconds * (2 ** (attempt - 1)))
+
+        detail = str(last_error) if last_error else "unknown HTTP error"
+        raise StockProviderError(
+            f"POST request failed after {self.max_attempts} attempt(s): "
+            f"{url}: {detail}"
+        ) from last_error
+
 
 class TextHttpClient:
     """Fetch HTML text and submit forms while preserving a cookie session.

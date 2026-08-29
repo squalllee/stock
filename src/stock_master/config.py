@@ -65,6 +65,11 @@ TPEX_INSIDER_TRANSFER_URL = (
 TPEX_INSIDER_UNTRANSFERRED_URL = (
     "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap13_O"
 )
+# MOPS company-level monthly insider holding balance (after-report) query.
+# Unlike the daily TWSE/TPEx OpenAPI feeds above, this endpoint accepts a
+# company code, ROC year, and month and returns the complete insider roster for
+# that company/month.
+MOPS_INSIDER_HOLDINGS_URL = "https://mops.twse.com.tw/mops/api/query6_1"
 BILLDB_SUPABASE_URL = "https://vngtmamxhvcldecesfwh.supabase.co"
 DEFAULT_SUPABASE_TDCC_BATCH_SIZE = 500
 TWSE_MARGIN_URL = "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN"
@@ -92,6 +97,8 @@ DEFAULT_TDCC_HISTORY_RECOVERY_BATCHES = 3
 DEFAULT_MARGIN_HISTORY_DAYS = 30
 DEFAULT_MARGIN_HISTORY_REQUEST_DELAY_SECONDS = 0.2
 DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS = 0.2
+DEFAULT_INSIDER_HISTORY_REQUEST_DELAY_SECONDS = 0.1
+DEFAULT_INSIDER_HISTORY_TIMEOUT_SECONDS = 45.0
 DEFAULT_MARGIN_FINANCING_RATIO = 0.60
 DEFAULT_MARGIN_MODEL_VERSION = "margin-cost-v1-wma-daily-market-average"
 

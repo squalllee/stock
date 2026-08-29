@@ -36,7 +36,9 @@ export function createStockDataService(supabase) {
       .order("id", { ascending: false })
       .limit(limit);
     if (error) throw new SupabaseQueryError("內部人申報查詢", error);
-    return (data || []).map(normalizeInsiderRow);
+    return (data || [])
+      .map(normalizeInsiderRow)
+      .filter(shouldDisplayInsiderRow);
   }
 
   return {
@@ -284,6 +286,19 @@ function normalizeInsiderRow(row) {
     effective_period: row.effective_period || null,
     reason: row.reason || null,
   };
+}
+
+function shouldDisplayInsiderRow(row) {
+  // A transfer disclosure without a positive transfer amount is not useful
+  // in the mobile card.  Keep monthly after-report holdings available even
+  // when their net change is zero, because those rows still carry a balance.
+  if (row.report_type !== "planned_transfer" && row.report_type !== "untransferred") {
+    return true;
+  }
+  return [row.shares_changed, row.planned_shares].some((value) => {
+    const shares = Number(value);
+    return Number.isFinite(shares) && shares > 0;
+  });
 }
 
 function buildAnnualBaselines(history) {

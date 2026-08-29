@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import pytest
 
@@ -206,6 +207,130 @@ def test_supabase_insider_sync_filters_to_stock_universe_and_upserts(monkeypatch
     assert all(codes == {"2330", "3105"} for _, _, codes in fetch_calls)
     assert client.upsert_calls[-1][0] == "insider_transactions"
     assert client.upsert_calls[-1][2] == "source,source_record_key"
+
+
+def test_supabase_insider_holdings_year_syncs_each_stock_in_bounded_batches(
+    monkeypatch,
+):
+    client = _Client()
+    fetch_calls = []
+
+    class FakeHoldingHistoryProvider:
+        def __init__(self, _client_factory, **kwargs):
+            fetch_calls.append(("init", kwargs))
+            self.last_query_count = 0
+            self.last_no_data_count = 0
+            self.last_failed_query_count = 0
+            self.last_failed_months = ()
+            self.last_skipped_count = 0
+
+        def fetch_year(self, stock_code, market, year, *, end_month):
+            fetch_calls.append((stock_code, market, year, end_month))
+            self.last_query_count = 2
+            self.last_no_data_count = 1
+            self.last_failed_query_count = 0
+            self.last_failed_months = ()
+            self.last_skipped_count = 1
+            return [
+                InsiderTransaction(
+                    report_date=f"{year}-01-31",
+                    stock_code=stock_code,
+                    market=market,
+                    report_type="after_report",
+                    transaction_type="buy",
+                    insider_name="王大明",
+                    insider_role="董事",
+                    shares_changed=200,
+                    source="twse_mops" if market == "TWSE" else "tpex_mops",
+                    source_record_key=f"{market}-{stock_code}",
+                    current_shares=1_200,
+                    after_shares=1_400,
+                    effective_period=f"{year}/01",
+                )
+            ]
+
+    monkeypatch.setattr(
+        market_sync_module,
+        "InsiderHoldingHistoryProvider",
+        FakeHoldingHistoryProvider,
+    )
+    monkeypatch.setattr(market_sync_module, "_mops_json_client", lambda: object())
+    service = SupabaseMarketSyncService(
+        client,
+        batch_size=2,
+        backoff_seconds=0,
+        insider_history_request_delay_seconds=0,
+    )
+
+    result = service.sync_insider_holdings_year(2026)
+
+    assert result["year"] == 2026
+    assert result["end_month"] == date.today().month
+    assert result["stock_count"] == 2
+    assert result["stocks_with_data"] == 2
+    assert result["query_count"] == 4
+    assert result["no_data_month_count"] == 2
+    assert result["failed_query_count"] == 0
+    assert result["partial"] is False
+    assert result["skipped_row_count"] == 2
+    assert result["record_count"] == 2
+    assert result["report_type_counts"] == {"after_report": 2}
+    assert result["market_counts"] == {"TWSE": 1, "TPEX": 1}
+    assert result["latest_data_date"] == "2026-01-31"
+    assert result["synced_count"] == 2
+    assert result["batch_count"] == 1
+    assert fetch_calls[0][0] == "init"
+    assert fetch_calls[1:] == [
+        ("2330", "TWSE", 2026, date.today().month),
+        ("3105", "TPEX", 2026, date.today().month),
+    ]
+    assert client.upsert_calls[-1][0] == "insider_transactions"
+    assert client.upsert_calls[-1][2] == "source,source_record_key"
+    assert {row["report_type"] for row in client.upsert_calls[-1][1]} == {
+        "after_report"
+    }
+
+
+def test_supabase_insider_holdings_year_reports_partial_timeout(monkeypatch):
+    client = _Client()
+
+    class FakeHoldingHistoryProvider:
+        def __init__(self, _client_factory, **_kwargs):
+            self.last_query_count = 0
+            self.last_no_data_count = 0
+            self.last_failed_query_count = 0
+            self.last_failed_months = ()
+            self.last_skipped_count = 0
+
+        def fetch_year(self, stock_code, market, year, *, end_month):
+            self.last_query_count = end_month
+            self.last_failed_query_count = 1 if stock_code == "2330" else 0
+            self.last_failed_months = (2,) if stock_code == "2330" else ()
+            self.last_no_data_count = end_month - self.last_failed_query_count
+            self.last_skipped_count = 0
+            return []
+
+    monkeypatch.setattr(
+        market_sync_module,
+        "InsiderHoldingHistoryProvider",
+        FakeHoldingHistoryProvider,
+    )
+    monkeypatch.setattr(market_sync_module, "_mops_json_client", lambda: object())
+    service = SupabaseMarketSyncService(
+        client,
+        backoff_seconds=0,
+        insider_history_request_delay_seconds=0,
+    )
+
+    result = service.sync_insider_holdings_year(2026)
+
+    assert result["record_count"] == 0
+    assert result["failed_query_count"] == 1
+    assert result["failed_stock_count"] == 1
+    assert result["failed_query_samples"] == ["2330:2026-02"]
+    assert result["partial"] is True
+    assert result.get("skipped") is not True
+    assert client.upsert_calls == []
 
 
 def test_supabase_tdcc_latest_skips_when_weekly_date_is_already_stored(

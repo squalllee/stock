@@ -139,6 +139,20 @@ def sync_insider_transactions(supabase_client: Any) -> Any:
     return result
 
 
+def sync_insider_holdings_year(
+    supabase_client: Any,
+    year: int | None = None,
+) -> Any:
+    """Synchronize MOPS monthly insider holdings for one calendar year."""
+
+    result = _market_service(supabase_client).sync_insider_holdings_year(year)
+    if isinstance(result, Mapping) and result.get("skipped"):
+        return SyncSkipped(
+            str(result.get("reason") or "官方目前沒有新的年度內部人持股資料")
+        )
+    return result
+
+
 def fetch_tdcc_open_data_latest_date() -> str:
     """Read the newest data date directly from the official TDCC Open Data API."""
 
@@ -273,6 +287,22 @@ def summarize_result(workflow: str, value: Any) -> str:
             f"預定轉讓 {planned_count:,}、未轉讓 {untransferred_count:,}；"
             f"最新 {data.get('latest_data_date') or '—'}）"
         )
+    if workflow == "insider-holdings-year":
+        failed_query_count = data.get("failed_query_count", 0)
+        completion = "部分完成" if failed_query_count else "完成"
+        failure_note = (
+            f"，逾時／失敗 {failed_query_count:,} 個月份（可重跑補齊）"
+            if failed_query_count
+            else ""
+        )
+        return (
+            f"{completion}：內部人持股年度資料 "
+            f"{data.get('year')} 年 {data.get('record_count', 0):,} 筆，"
+            f"涵蓋 {data.get('stocks_with_data', 0):,} 支股票，"
+            f"查詢 {data.get('query_count', 0):,} 次，"
+            f"最新 {data.get('latest_data_date') or '—'}"
+            f"{failure_note}"
+        )
     return "完成：同步工作已完成"
 
 
@@ -288,6 +318,11 @@ class DesktopSyncApp:
             "insider-transactions",
             "內部人申報",
             "同步 TWSE + TPEx 預定轉讓／未轉讓",
+        ),
+        (
+            "insider-holdings-year",
+            "內部人持股年度",
+            "同步選定年度 MOPS 每月持股",
         ),
     )
 
@@ -316,7 +351,10 @@ class DesktopSyncApp:
         self.daily_price_api_date_var = tk.StringVar(value="查詢中……")
         self.insider_api_date_var = tk.StringVar(value="查詢中……")
         self.detail_var = tk.StringVar(
-            value="請先同步股票主檔，再同步 TDCC、每日成交行情或內部人申報。"
+            value=(
+                "請先同步股票主檔，再同步 TDCC、每日成交行情、"
+                "內部人申報或年度內部人持股。"
+            )
         )
         self._events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._executor = ThreadPoolExecutor(
@@ -465,7 +503,7 @@ class DesktopSyncApp:
 
         year_row = self.ttk.Frame(action_frame)
         year_row.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
-        self.ttk.Label(year_row, text="TDCC 年度資料的年份：").pack(side="left")
+        self.ttk.Label(year_row, text="年度資料的年份（TDCC／內部人）：").pack(side="left")
         self.ttk.Spinbox(
             year_row,
             from_=2000,
@@ -475,7 +513,7 @@ class DesktopSyncApp:
         ).pack(side="left")
         self.ttk.Label(
             year_row,
-            text="（年度同步可能需要較長時間）",
+            text="（年度同步可能需要較長時間；內部人資料採 MOPS 月報）",
             style="Subtitle.TLabel",
         ).pack(side="left", padx=(8, 0))
 
@@ -525,20 +563,28 @@ class DesktopSyncApp:
                 )
                 return
 
-        if workflow == "tdcc-year":
+        if workflow in {"tdcc-year", "insider-holdings-year"}:
+            annual_label = (
+                "TDCC"
+                if workflow == "tdcc-year"
+                else "內部人持股（MOPS 月報）"
+            )
             try:
                 year = int(self.year_var.get().strip())
             except ValueError:
-                self.messagebox.showerror("年份錯誤", "TDCC 年份請輸入四位數字。")
+                self.messagebox.showerror(
+                    "年份錯誤", f"{annual_label} 年份請輸入四位數字。"
+                )
                 return
             if year < 2000 or year > date.today().year:
                 self.messagebox.showerror(
-                    "年份錯誤", f"TDCC 年份必須介於 2000 到 {date.today().year}。"
+                    "年份錯誤",
+                    f"{annual_label} 年份必須介於 2000 到 {date.today().year}。",
                 )
                 return
             if not self.messagebox.askyesno(
                 "開始年度同步？",
-                f"即將同步 TDCC {year} 年資料，可能需要較長時間。\n\n要繼續嗎？",
+                f"即將同步 {annual_label} {year} 年資料，可能需要較長時間。\n\n要繼續嗎？",
             ):
                 return
 
@@ -564,6 +610,10 @@ class DesktopSyncApp:
             ),
             "insider-transactions": lambda: sync_insider_transactions(
                 self.supabase_client
+            ),
+            "insider-holdings-year": lambda: sync_insider_holdings_year(
+                self.supabase_client,
+                year or date.today().year,
             ),
         }
         task = tasks[workflow]
