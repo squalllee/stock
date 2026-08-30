@@ -2,6 +2,7 @@ import { ArrowRight, TrendingUp } from "lucide-react";
 
 import { AppLink } from "../lib/router.jsx";
 import {
+  formatAccounts,
   formatDate,
   formatLots,
   formatPrice,
@@ -68,7 +69,7 @@ export default function StockCard({ stock, screener = false, largeHolderOption }
         <div className="holding-block holding-retail">
           <span className="holding-label">散戶持股</span>
           <strong>{formatRatio(stock.retail_ratio)}</strong>
-          <small>{formatLots(stock.retail_share_count)}</small>
+          <small>{formatLots(stock.retail_share_count)} · {formatAccounts(stock.retail_holder_count)}</small>
         </div>
       </div>
     </AppLink>
