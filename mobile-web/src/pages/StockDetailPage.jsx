@@ -185,7 +185,7 @@ function InsiderTransactions({ transactions }) {
       <div className="section-heading compact">
         <div>
           <h2 id="insider-title">公司內部人申報</h2>
-          <p>依 Supabase 股票代號保存；事後持股僅顯示最近一期月份，轉讓申報照官方資料保留。</p>
+          <p>僅顯示最近一個有買入或賣出的 MOPS 月份；每週明細保留歷史持股快照。</p>
         </div>
         <small className="section-meta">{transactions.length} 筆</small>
       </div>
@@ -199,8 +199,7 @@ function InsiderTransactions({ transactions }) {
         <p className="insider-empty">目前沒有這支股票的內部人申報資料。</p>
       )}
       <p className="insider-disclaimer">
-        事前申報是預定轉讓，不等同已成交；未轉讓列表示後續申報的未完成股數；
-        事後申報為 MOPS 月底持股資料。
+        本區只列出 MOPS 事後申報中有買入或賣出股數的資料；事前／未轉讓申報不列入本區。
       </p>
     </section>
   );
@@ -239,7 +238,7 @@ function InsiderCard({ item }) {
         </div>
         <strong className="insider-kind">
           {afterReport
-            ? "月底持股"
+            ? item.transaction_type === "buy" ? "買入" : "賣出"
             : item.report_type === "untransferred"
               ? "未完成"
               : "預定轉讓"}

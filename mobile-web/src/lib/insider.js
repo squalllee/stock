@@ -1,23 +1,27 @@
+const TRADE_TYPES = new Set(["buy", "sell"]);
+
 /**
- * Keep the latest available MOPS holding month for the disclosure cards.
- *
- * Planned-transfer and untransferred rows are daily disclosures rather than
- * monthly holding snapshots, so they remain visible alongside the latest
- * after-report month.
+ * Keep only MOPS monthly rows with an actual buy/sell change, using the latest
+ * month that contains one.  The API still returns the full holding history so
+ * the weekly detail cards can calculate historical snapshots independently.
  */
 export function filterToLatestHoldingMonth(transactions) {
-  const availableMonths = (transactions || [])
-    .filter((row) => row?.report_type === "after_report")
+  const tradeRows = (transactions || [])
+    .filter(isTradeRow);
+  const availableMonths = tradeRows
     .map((row) => reportMonth(row?.report_date))
     .filter(Boolean)
     .sort();
   const latestMonth = availableMonths[availableMonths.length - 1];
 
-  if (!latestMonth) return transactions || [];
-  return (transactions || []).filter(
-    (row) =>
-      row?.report_type !== "after_report"
-      || reportMonth(row.report_date) === latestMonth,
+  if (!latestMonth) return [];
+  return tradeRows.filter((row) => reportMonth(row.report_date) === latestMonth);
+}
+
+function isTradeRow(row) {
+  return (
+    row?.report_type === "after_report"
+    && TRADE_TYPES.has(String(row?.transaction_type || "").toLowerCase())
   );
 }
 
