@@ -48,6 +48,8 @@ def test_tpex_margin_parse_uses_trading_units():
         short_previous_balance=8,
         short_balance=8,
         offsetting_volume=0,
+        margin_limit=0,
+        margin_utilization=0.0,
     )
     assert len(records) == 3
     assert provider.last_trade_date == "2026-08-07"

@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
+from math import isfinite
 from pathlib import Path
 
 from stock_master.exceptions import DatabaseError
@@ -32,6 +33,8 @@ CREATE TABLE IF NOT EXISTS margin_history (
     short_balance INTEGER NOT NULL,
 
     offsetting_volume INTEGER,
+    margin_limit INTEGER,
+    margin_utilization REAL,
 
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -65,9 +68,11 @@ INSERT INTO margin_history (
     short_stock_redemption,
     short_previous_balance,
     short_balance,
-    offsetting_volume
+    offsetting_volume,
+    margin_limit,
+    margin_utilization
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(trade_date, stock_code)
 DO UPDATE SET
     market = excluded.market,
@@ -82,6 +87,8 @@ DO UPDATE SET
     short_previous_balance = excluded.short_previous_balance,
     short_balance = excluded.short_balance,
     offsetting_volume = excluded.offsetting_volume,
+    margin_limit = excluded.margin_limit,
+    margin_utilization = excluded.margin_utilization,
     updated_at = CURRENT_TIMESTAMP;
 """
 
@@ -114,12 +121,31 @@ class MarginHistoryRepository:
         try:
             with connection:
                 connection.executescript(SCHEMA_SQL)
+                self._ensure_optional_columns(connection)
         except sqlite3.Error as exc:
             raise DatabaseError(
                 f"Could not create margin SQLite schema in {self.db_path}: {exc}"
             ) from exc
         finally:
             connection.close()
+
+    @staticmethod
+    def _ensure_optional_columns(connection: sqlite3.Connection) -> None:
+        """Upgrade a pre-utilization SQLite table in place."""
+
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(margin_history)")
+        }
+        additions = (
+            ("margin_limit", "INTEGER"),
+            ("margin_utilization", "REAL"),
+        )
+        for name, data_type in additions:
+            if name not in columns:
+                connection.execute(
+                    f"ALTER TABLE margin_history ADD COLUMN {name} {data_type}"
+                )
 
     def upsert(self, margin: MarginHistory) -> "MarginRepositorySyncStats":
         """Upsert one margin history record."""
@@ -165,6 +191,8 @@ class MarginHistoryRepository:
                             item.short_previous_balance,
                             item.short_balance,
                             item.offsetting_volume,
+                            item.margin_limit,
+                            item.margin_utilization,
                         )
                         for item in values
                     ],
@@ -320,6 +348,7 @@ class MarginHistoryRepository:
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> MarginHistory:
+        columns = set(row.keys())
         return MarginHistory(
             trade_date=row["trade_date"],
             stock_code=row["stock_code"],
@@ -335,6 +364,14 @@ class MarginHistoryRepository:
             short_previous_balance=row["short_previous_balance"],
             short_balance=row["short_balance"],
             offsetting_volume=row["offsetting_volume"],
+            # Old SQLite databases may be read in readonly mode before the
+            # additive schema upgrade can run; treat the new fields as NULL.
+            margin_limit=row["margin_limit"] if "margin_limit" in columns else None,
+            margin_utilization=(
+                row["margin_utilization"]
+                if "margin_utilization" in columns
+                else None
+            ),
         )
 
     @staticmethod
@@ -379,6 +416,24 @@ class MarginHistoryRepository:
             ):
                 raise DatabaseError(
                     "Margin offsetting_volume must be a non-negative integer or NULL."
+                )
+            if item.margin_limit is not None and (
+                isinstance(item.margin_limit, bool)
+                or not isinstance(item.margin_limit, int)
+                or item.margin_limit < 0
+            ):
+                raise DatabaseError(
+                    "Margin margin_limit must be a non-negative integer or NULL."
+                )
+            if item.margin_utilization is not None and (
+                isinstance(item.margin_utilization, bool)
+                or not isinstance(item.margin_utilization, (int, float))
+                or not isfinite(item.margin_utilization)
+                or item.margin_utilization < 0
+                or item.margin_utilization > 100
+            ):
+                raise DatabaseError(
+                    "Margin margin_utilization must be between 0 and 100 or NULL."
                 )
 
     @staticmethod

@@ -29,3 +29,8 @@ class MarginHistory:
     short_balance: int
 
     offsetting_volume: int | None = None
+    # Official reports expose the next-day/approved financing limit and, for
+    # TPEx, the resulting utilization percentage.  TWSE utilization is
+    # derived from today's balance divided by that limit.
+    margin_limit: int | None = None
+    margin_utilization: float | None = None

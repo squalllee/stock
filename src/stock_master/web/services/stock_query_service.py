@@ -534,6 +534,8 @@ def _margin_dict(value: MarginHistory | None) -> dict[str, Any] | None:
         "short_previous_balance": value.short_previous_balance,
         "short_balance": value.short_balance,
         "offsetting_volume": value.offsetting_volume,
+        "margin_limit": value.margin_limit,
+        "margin_utilization": value.margin_utilization,
     }
 
 

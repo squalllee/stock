@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from math import isfinite
 from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -140,6 +141,48 @@ def parse_optional_non_negative_int(
         field=field,
         record_index=record_index,
     )
+
+
+def parse_optional_non_negative_float(
+    value: object,
+    *,
+    market: str,
+    field: str,
+    record_index: int,
+) -> float | None:
+    """Parse an optional decimal percentage from an official report."""
+
+    raw = str(value).replace("\ufeff", "").strip()
+    if not raw or raw in {"--", "－", "-"}:
+        return None
+    raw = raw.replace(",", "").replace("，", "").replace("%", "")
+    try:
+        number = Decimal(raw)
+    except (InvalidOperation, ValueError) as exc:
+        raise StockDataValidationError(
+            f"{market} record {record_index} has invalid {field} {value!r}."
+        ) from exc
+    if not number.is_finite() or number < 0:
+        raise StockDataValidationError(
+            f"{market} record {record_index} has invalid {field} {value!r}."
+        )
+    result = float(number)
+    if not isfinite(result):
+        raise StockDataValidationError(
+            f"{market} record {record_index} has invalid {field} {value!r}."
+        )
+    return result
+
+
+def calculate_margin_utilization(
+    margin_balance: int,
+    margin_limit: int | None,
+) -> float | None:
+    """Derive TWSE utilization when the official report omits the percentage."""
+
+    if margin_limit is None or margin_limit <= 0:
+        return None
+    return round(margin_balance / margin_limit * 100, 4)
 
 
 def find_field_index(
@@ -290,4 +333,22 @@ def validate_margin_record(record: MarginHistory, market: str) -> None:
     ):
         raise StockDataValidationError(
             f"{market} margin returned invalid offsetting_volume."
+        )
+    if record.margin_limit is not None and (
+        isinstance(record.margin_limit, bool)
+        or not isinstance(record.margin_limit, int)
+        or record.margin_limit < 0
+    ):
+        raise StockDataValidationError(
+            f"{market} margin returned invalid margin_limit."
+        )
+    if record.margin_utilization is not None and (
+        isinstance(record.margin_utilization, bool)
+        or not isinstance(record.margin_utilization, (int, float))
+        or not isfinite(float(record.margin_utilization))
+        or record.margin_utilization < 0
+        or record.margin_utilization > 100
+    ):
+        raise StockDataValidationError(
+            f"{market} margin returned invalid margin_utilization."
         )

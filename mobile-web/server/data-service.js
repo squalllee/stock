@@ -48,6 +48,17 @@ export function createStockDataService(supabase) {
       .filter(shouldDisplayInsiderRow)).slice(0, limit);
   }
 
+  async function getMarginLatest(stockCode) {
+    const { data, error } = await supabase
+      .from("margin_history")
+      .select("trade_date,stock_code,market,margin_balance,margin_limit,margin_utilization")
+      .eq("stock_code", stockCode)
+      .order("trade_date", { ascending: false })
+      .limit(1);
+    if (error) throw new SupabaseQueryError("融資使用率查詢", error);
+    return data?.length ? normalizeMarginRow(data[0]) : null;
+  }
+
   return {
     async searchStocks(
       query,
@@ -81,7 +92,7 @@ export function createStockDataService(supabase) {
         requestedLargeLevelMin,
         requestedLargeLevelMax,
       );
-      const [stockResult, historyResult, priceRows, insiderRows] = await Promise.all([
+      const [stockResult, historyResult, priceRows, insiderRows, margin] = await Promise.all([
         supabase
           .from("stocks")
           .select("stock_code,stock_name,market")
@@ -95,6 +106,7 @@ export function createStockDataService(supabase) {
         }),
         getPriceHistory(stockCode, weeks),
         getInsiderTransactions(stockCode),
+        getMarginLatest(stockCode),
       ]);
 
       if (stockResult.error) {
@@ -114,11 +126,13 @@ export function createStockDataService(supabase) {
         annual_baselines: buildAnnualBaselines(fullHistory),
         prices: priceRows,
         insider_transactions: insiderRows,
+        margin,
       };
     },
 
     getPriceHistory,
     getInsiderTransactions,
+    getMarginLatest,
 
     async getIncreasingStocks(
       requestedWeeks = 3,
@@ -293,6 +307,25 @@ function normalizeInsiderRow(row) {
     after_shares: numberOrNull(row.after_shares),
     effective_period: row.effective_period || null,
     reason: row.reason || null,
+  };
+}
+
+function normalizeMarginRow(row) {
+  const marginBalance = numberOrZero(row.margin_balance);
+  const marginLimit = numberOrNull(row.margin_limit);
+  let utilization = numberOrNull(row.margin_utilization);
+  // TWSE does not publish a percentage; the desktop sync stores a derived
+  // value, but retaining this fallback keeps older rows useful on the site.
+  if (utilization === null && marginLimit !== null && marginLimit > 0) {
+    utilization = Math.round((marginBalance / marginLimit) * 100 * 10000) / 10000;
+  }
+  return {
+    trade_date: row.trade_date,
+    stock_code: row.stock_code,
+    market: row.market,
+    margin_balance: marginBalance,
+    margin_limit: marginLimit,
+    margin_utilization: utilization,
   };
 }
 

@@ -49,6 +49,8 @@ def test_twse_margin_parse_and_normalize_units():
             short_previous_balance=4000,
             short_balance=3987,
             offsetting_volume=5,
+            margin_limit=200000,
+            margin_utilization=50.3295,
         ),
         MarginHistory(
             trade_date="2026-08-07",
@@ -65,6 +67,8 @@ def test_twse_margin_parse_and_normalize_units():
             short_previous_balance=30,
             short_balance=29,
             offsetting_volume=1,
+            margin_limit=2000,
+            margin_utilization=54.0,
         ),
         MarginHistory(
             trade_date="2026-08-07",
@@ -81,6 +85,8 @@ def test_twse_margin_parse_and_normalize_units():
             short_previous_balance=3,
             short_balance=4,
             offsetting_volume=None,
+            margin_limit=20,
+            margin_utilization=45.0,
         ),
     ]
     assert provider.last_trade_date == "2026-08-07"

@@ -20,6 +20,7 @@ from .margin_base import (
     normalize_trade_date,
     parse_non_negative_int,
     parse_optional_non_negative_int,
+    parse_optional_non_negative_float,
     require_mapping_payload,
     require_table_data,
     require_tables,
@@ -119,6 +120,12 @@ class TPExMarginProvider(MarginProvider):
             ),
             "margin_balance": find_field_index(
                 fields, ("資餘額",), market=self.market
+            ),
+            "margin_utilization": find_field_index(
+                fields, ("資使用率(%)", "資使用率"), market=self.market
+            ),
+            "margin_limit": find_field_index(
+                fields, ("資限額",), market=self.market
             ),
             "short_previous_balance": find_field_index(
                 fields, ("前券餘額(張)", "前券餘額"), market=self.market
@@ -223,6 +230,18 @@ class TPExMarginProvider(MarginProvider):
                     _row_value(row, indexes["offsetting_volume"], market=self.market, field="offsetting_volume", row_index=row_index),
                     market=self.market,
                     field="offsetting_volume",
+                    record_index=row_index,
+                ),
+                margin_limit=parse_optional_non_negative_int(
+                    _row_value(row, indexes["margin_limit"], market=self.market, field="margin_limit", row_index=row_index),
+                    market=self.market,
+                    field="margin_limit",
+                    record_index=row_index,
+                ),
+                margin_utilization=parse_optional_non_negative_float(
+                    _row_value(row, indexes["margin_utilization"], market=self.market, field="margin_utilization", row_index=row_index),
+                    market=self.market,
+                    field="margin_utilization",
                     record_index=row_index,
                 ),
             )

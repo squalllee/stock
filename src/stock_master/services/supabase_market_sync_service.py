@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -33,8 +33,10 @@ from stock_master.config import (
     MOPS_INSIDER_HOLDINGS_URL,
     TDCC_API_URL,
     TDCC_HISTORY_URL,
+    TPEX_MARGIN_URL,
     TPEX_API_URL,
     TPEX_PRICE_URL,
+    TWSE_MARGIN_URL,
     TWSE_API_URL,
     TWSE_PRICE_URL,
 )
@@ -45,6 +47,7 @@ from stock_master.exceptions import (
 )
 from stock_master.models import (
     InsiderTransaction,
+    MarginHistory,
     PriceHistory,
     Stock,
     TDCCDistribution,
@@ -57,12 +60,15 @@ from stock_master.providers import (
     TDCCDistributionProvider,
     InsiderTransferProvider,
     InsiderUntransferredProvider,
+    TPExMarginProvider,
     TextHttpClient,
     TPExPriceProvider,
     TPExStockProvider,
+    TWSEMarginProvider,
     TWSEPriceProvider,
     TWSEStockProvider,
 )
+from stock_master.providers.margin_base import validate_margin_record
 from stock_master.services.normalizer import is_valid_stock_code
 from stock_master.services.price_history_sync_service import PriceHistorySyncService
 from stock_master.services.price_sync_service import PriceSyncService
@@ -73,6 +79,7 @@ logger = logging.getLogger(__name__)
 
 _PAGE_SIZE = 1000
 _MARKETS = frozenset({"TWSE", "TPEX"})
+_MARGIN_TOTAL_MARKERS = frozenset({"合計", "總計", "total", "grandtotal"})
 _RETRYABLE_TDCC_HISTORY_FAILURES = (
     "session initialization failed",
     "missing form session fields",
@@ -310,6 +317,47 @@ class _SupabasePriceRepository:
         )
 
 
+class _SupabaseMarginRepository:
+    """Repository adapter for official daily margin-trading facts."""
+
+    TABLE_NAME = "margin_history"
+
+    def __init__(self, writer: _SupabaseBatchWriter) -> None:
+        self.writer = writer
+
+    def upsert_many(
+        self, margins: Iterable[MarginHistory]
+    ) -> SupabaseUpsertStats:
+        synced_at = _utc_now()
+        values = [
+            {
+                "trade_date": margin.trade_date,
+                "stock_code": margin.stock_code,
+                "market": margin.market,
+                "margin_buy": margin.margin_buy,
+                "margin_sell": margin.margin_sell,
+                "margin_cash_redemption": margin.margin_cash_redemption,
+                "margin_previous_balance": margin.margin_previous_balance,
+                "margin_balance": margin.margin_balance,
+                "short_buy": margin.short_buy,
+                "short_sell": margin.short_sell,
+                "short_stock_redemption": margin.short_stock_redemption,
+                "short_previous_balance": margin.short_previous_balance,
+                "short_balance": margin.short_balance,
+                "offsetting_volume": margin.offsetting_volume,
+                "margin_limit": margin.margin_limit,
+                "margin_utilization": margin.margin_utilization,
+                "updated_at": synced_at,
+            }
+            for margin in margins
+        ]
+        return self.writer.upsert(
+            self.TABLE_NAME,
+            values,
+            on_conflict="trade_date,stock_code",
+        )
+
+
 class _SupabaseTDCCRepository:
     """Repository adapter that writes normalized TDCC models to Supabase."""
 
@@ -537,7 +585,7 @@ class _PrefetchedTDCCProvider:
 
 
 class SupabaseMarketSyncService:
-    """Run stock, price, and TDCC workflows without touching SQLite."""
+    """Run stock, price, margin, TDCC, and insider workflows without SQLite."""
 
     def __init__(
         self,
@@ -620,6 +668,144 @@ class SupabaseMarketSyncService:
             service,
             request_delay_seconds=DEFAULT_PRICE_HISTORY_REQUEST_DELAY_SECONDS,
         ).sync(start_date, end_date)
+
+    def sync_margin_latest(self) -> dict[str, object]:
+        """Fetch and upsert the latest TWSE/TPEx margin usage snapshot."""
+
+        stocks = self.universe.get_all()
+        codes_by_market = {
+            market: {stock.stock_code for stock in stocks if stock.market == market}
+            for market in _MARKETS
+        }
+        client = _json_client()
+        providers = (
+            ("TWSE", TWSEMarginProvider(client, url=TWSE_MARGIN_URL)),
+            ("TPEX", TPExMarginProvider(client, url=TPEX_MARGIN_URL)),
+        )
+        records: list[MarginHistory] = []
+        market_counts: dict[str, int] = {}
+        latest_dates: list[str] = []
+        skipped_total_count = 0
+        skipped_non_master_count = 0
+        saw_provider_rows = False
+        saw_no_data_market = False
+        records_by_key: dict[tuple[str, str], MarginHistory] = {}
+
+        for market, provider in providers:
+            valid_codes = codes_by_market[market]
+            if not valid_codes:
+                logger.info("No %s stocks in Supabase stock master; skipping margin request", market)
+                continue
+            rows = provider.fetch()
+            saw_provider_rows = saw_provider_rows or bool(rows)
+            skipped_total_count += int(
+                getattr(provider, "last_skipped_total_count", 0) or 0
+            )
+            if getattr(provider, "last_no_data", False):
+                if records_by_key:
+                    raise StockDataValidationError(
+                        f"{market} margin returned no data while another market had data."
+                    )
+                saw_no_data_market = True
+                continue
+            if not rows:
+                raise StockDataValidationError(
+                    f"{market} margin returned no records without a valid no-data marker; "
+                    "refusing to sync."
+                )
+            provider_date = _normalize_margin_date(
+                getattr(provider, "last_trade_date", None), market
+            )
+            if provider_date:
+                latest_dates.append(provider_date)
+            row_dates = {
+                _normalize_margin_date(row.trade_date, market)
+                for row in rows
+                if isinstance(row, MarginHistory)
+            }
+            if provider_date is None:
+                if len(row_dates) != 1:
+                    raise StockDataValidationError(
+                        f"{market} margin provider returned mixed or missing trade dates."
+                    )
+                provider_date = row_dates.pop()
+            kept = 0
+            for row in rows:
+                if not isinstance(row, MarginHistory):
+                    raise StockDataValidationError(
+                        f"{market} margin provider returned a non-MarginHistory value."
+                    )
+                validate_margin_record(row, market)
+                row_date = _normalize_margin_date(row.trade_date, market)
+                if row_date != provider_date:
+                    raise StockDataValidationError(
+                        f"{market} margin returned mixed trade dates: expected "
+                        f"{provider_date}, got {row_date}."
+                    )
+                code = row.stock_code.strip()
+                if code.casefold() in _MARGIN_TOTAL_MARKERS:
+                    skipped_total_count += 1
+                    continue
+                if code not in valid_codes:
+                    skipped_non_master_count += 1
+                    continue
+                if code != row.stock_code or row_date != row.trade_date:
+                    row = replace(row, stock_code=code, trade_date=row_date)
+                key = (row.trade_date, row.stock_code)
+                previous = records_by_key.get(key)
+                if previous is not None and previous != row:
+                    raise StockDataValidationError(
+                        "Conflicting margin records for key "
+                        f"{key}: {previous!r} vs {row!r}."
+                    )
+                records_by_key[key] = row
+                kept += 1
+            market_counts[market] = kept
+
+        records = list(records_by_key.values())
+        if saw_no_data_market and records:
+            raise StockDataValidationError(
+                "TWSE and TPEx margin data are incomplete: one market returned no data."
+            )
+        if not records:
+            if saw_provider_rows:
+                raise StockDataValidationError(
+                    "Margin providers returned no records belonging to Supabase stocks; "
+                    "refusing to sync."
+                )
+            return {
+                "skipped": True,
+                "reason": "官方目前沒有新的融資融券資料",
+                "trade_date": None,
+                "latest_data_date": max(latest_dates) if latest_dates else None,
+                "stocks_count": len(stocks),
+                "margin_count": 0,
+                "market_counts": market_counts,
+                "skipped_total_count": skipped_total_count,
+                "skipped_non_master_count": skipped_non_master_count,
+            }
+
+        record_dates = {record.trade_date for record in records}
+        if len(record_dates) != 1:
+            raise StockDataValidationError(
+                "TWSE and TPEx margin providers returned different trade dates: "
+                + ", ".join(sorted(record_dates))
+            )
+        trade_date = record_dates.pop()
+        stats = _SupabaseMarginRepository(self.writer).upsert_many(records)
+        return {
+            "trade_date": trade_date,
+            "latest_data_date": trade_date,
+            "stocks_count": len(stocks),
+            "margin_count": len(records),
+            "market_counts": market_counts,
+            "skipped_total_count": skipped_total_count,
+            "skipped_non_master_count": skipped_non_master_count,
+            "inserted_count": stats.inserted_count,
+            "updated_count": stats.updated_count,
+            "synced_count": stats.synced_count,
+            "batch_count": stats.batch_count,
+        }
 
     def sync_insider_transactions(self) -> dict[str, object]:
         """Fetch the current TWSE/TPEx insider disclosure feeds.
@@ -1118,3 +1304,16 @@ def _text_client() -> TextHttpClient:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _normalize_margin_date(value: object, market: str) -> str | None:
+    """Normalize a provider date before comparing or persisting it."""
+
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value).strip()).isoformat()
+    except (TypeError, ValueError) as exc:
+        raise StockDataValidationError(
+            f"{market} margin provider returned invalid trade date {value!r}."
+        ) from exc

@@ -51,6 +51,8 @@ class MarginSchema(BaseModel):
     short_previous_balance: int
     short_balance: int
     offsetting_volume: int | None = None
+    margin_limit: int | None = None
+    margin_utilization: float | None = None
 
 
 class MarginEstimateSchema(BaseModel):

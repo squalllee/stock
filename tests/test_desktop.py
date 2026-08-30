@@ -101,8 +101,38 @@ def test_desktop_result_summaries_are_user_facing():
         StockResult(total_count=10, twse_count=7, tpex_count=3),
     )
     assert summary == "完成：股票主檔 10 筆（TWSE 7、TPEX 3）"
+    assert summarize_result(
+        "margin-latest",
+        {
+            "trade_date": "2026-08-28",
+            "margin_count": 1970,
+            "market_counts": {"TWSE": 980, "TPEX": 990},
+        },
+    ) == "完成：融資使用率 1,970 筆，日期 2026-08-28（TWSE 980、TPEx 990）"
     assert "沒有新的股權分散資料" in summarize_result(
         "tdcc-latest", SyncSkipped("TDCC 官方目前沒有新的股權分散資料")
+    )
+
+
+def test_desktop_margin_wrapper_and_summary(monkeypatch):
+    calls = []
+
+    class FakeService:
+        def sync_margin_latest(self):
+            calls.append(True)
+            return {
+                "trade_date": "2026-08-28",
+                "margin_count": 2,
+                "market_counts": {"TWSE": 1, "TPEX": 1},
+            }
+
+    monkeypatch.setattr(desktop_module, "_market_service", lambda _: FakeService())
+
+    result = desktop_module.sync_margin_latest(object())
+
+    assert calls == [True]
+    assert summarize_result("margin-latest", result) == (
+        "完成：融資使用率 2 筆，日期 2026-08-28（TWSE 1、TPEx 1）"
     )
 
 
@@ -232,6 +262,7 @@ def test_desktop_workflows_include_current_year_insider_holdings_action():
     workflow_keys = {key for key, _label, _description in desktop_module.DesktopSyncApp.WORKFLOWS}
 
     assert "insider-holdings-year" in workflow_keys
+    assert "margin-latest" in workflow_keys
 
 
 def test_desktop_insider_holdings_summary_reports_partial_timeouts():

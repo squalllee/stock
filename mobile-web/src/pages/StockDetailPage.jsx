@@ -1,4 +1,4 @@
-import { CalendarDays, Info, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { CalendarDays, Gauge, Info, TrendingDown, TrendingUp, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
@@ -76,6 +76,7 @@ export default function StockDetailPage({ stockCode }) {
     annual_baselines: annualBaselines = {},
     prices = [],
     insider_transactions: insiderTransactions = [],
+    margin = null,
   } = state.data;
   const visibleInsiderTransactions = filterToLatestHoldingMonth(insiderTransactions);
   return (
@@ -92,6 +93,8 @@ export default function StockDetailPage({ stockCode }) {
           <strong>{formatDate(latest?.data_date)}</strong>
         </div>
       </section>
+
+      <MarginUsage margin={margin} />
 
       {!latest ? (
         <EmptyState title="尚無 TDCC 資料" description="請先在同步工具更新這支股票的 TDCC 資料。" />
@@ -176,6 +179,41 @@ export default function StockDetailPage({ stockCode }) {
         </div>
       </footer>
     </div>
+  );
+}
+
+function MarginUsage({ margin }) {
+  if (!margin) return null;
+  const utilization = margin.margin_utilization === null
+    ? "無資料"
+    : formatRatio(margin.margin_utilization);
+  return (
+    <section className="detail-section margin-section" aria-labelledby="margin-title">
+      <div className="section-heading compact">
+        <div>
+          <h2 id="margin-title"><Gauge size={19} aria-hidden="true" /> 融資使用率</h2>
+          <p>官方最新融資餘額與限額；TWSE 使用率由餘額 ÷ 次一營業日限額計算。</p>
+        </div>
+        <small className="section-meta">{formatDate(margin.trade_date)}</small>
+      </div>
+      <div className="margin-summary">
+        <div className="margin-rate">
+          <span>使用率</span>
+          <strong>{utilization}</strong>
+          <small>{margin.market === "TPEX" ? "TPEx 官方百分比" : "TWSE 依官方限額推算"}</small>
+        </div>
+        <div>
+          <span>融資餘額</span>
+          <strong>{formatLots(margin.margin_balance)}</strong>
+          <small>{formatShares(margin.margin_balance)}</small>
+        </div>
+        <div>
+          <span>融資限額</span>
+          <strong>{margin.margin_limit === null ? "無資料" : formatLots(margin.margin_limit)}</strong>
+          <small>{margin.margin_limit === null ? "官方未提供" : "張"}</small>
+        </div>
+      </div>
+    </section>
   );
 }
 

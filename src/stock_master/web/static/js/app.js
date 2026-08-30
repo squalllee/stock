@@ -237,13 +237,18 @@
       return;
     }
     const latest = items[items.length - 1];
-    setText("[data-margin-summary]", "融資 " + displayNumber(latest.margin_balance, "volume") + " · 融券 " + displayNumber(latest.short_balance, "volume") + " · " + latest.trade_date);
+    const utilizationSummary = latest.margin_utilization === null || latest.margin_utilization === undefined
+      ? ""
+      : " · 使用率 " + displayNumber(latest.margin_utilization, "ratio");
+    setText("[data-margin-summary]", "融資 " + displayNumber(latest.margin_balance, "volume") + " · 融券 " + displayNumber(latest.short_balance, "volume") + utilizationSummary + " · " + latest.trade_date);
     document.querySelector("[data-margin-facts]").innerHTML = [
       fact("前日融資餘額", latest.margin_previous_balance, "volume"),
       fact("融資買進", latest.margin_buy, "volume"),
       fact("融資賣出", latest.margin_sell, "volume"),
       fact("現金償還", latest.margin_cash_redemption, "volume"),
       fact("融資餘額", latest.margin_balance, "volume"),
+      fact("融資限額", latest.margin_limit, "volume"),
+      fact("融資使用率", latest.margin_utilization, "ratio"),
       fact("融券餘額", latest.short_balance, "volume"),
       fact("資券相抵", latest.offsetting_volume, "volume")
     ].join("");

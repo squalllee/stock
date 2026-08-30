@@ -308,6 +308,33 @@ describe("stock data service", () => {
             },
           };
         }
+        if (table === "margin_history") {
+          return {
+            select() {
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            order() {
+              return this;
+            },
+            async limit(value) {
+              assert.equal(value, 1);
+              return {
+                data: [{
+                  trade_date: "2026-08-28",
+                  stock_code: "2330",
+                  market: "TWSE",
+                  margin_balance: "100659",
+                  margin_limit: "200000",
+                  margin_utilization: "50.3295",
+                }],
+                error: null,
+              };
+            },
+          };
+        }
         return {
           select() {
             return this;
@@ -434,6 +461,14 @@ describe("stock data service", () => {
     assert.equal(detail.insider_transactions[0].shares_changed, 250000);
     assert.equal(detail.insider_transactions[0].planned_shares, 250000);
     assert.equal(detail.insider_transactions[0].reason, "財務規劃");
+    assert.deepEqual(detail.margin, {
+      trade_date: "2026-08-28",
+      stock_code: "2330",
+      market: "TWSE",
+      margin_balance: 100659,
+      margin_limit: 200000,
+      margin_utilization: 50.3295,
+    });
     assert.deepEqual(rpcCalls[0], [
       "get_tdcc_stock_detail",
       {

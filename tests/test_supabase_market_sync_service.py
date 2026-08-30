@@ -7,11 +7,17 @@ import pytest
 
 import stock_master.services.supabase_market_sync_service as market_sync_module
 from stock_master.exceptions import StockDataValidationError, StockProviderError
-from stock_master.models import InsiderTransaction, PriceHistory, TDCCDistribution
+from stock_master.models import (
+    InsiderTransaction,
+    MarginHistory,
+    PriceHistory,
+    TDCCDistribution,
+)
 from stock_master.providers import TDCCHistoricalQueryResult
 from stock_master.services.supabase_market_sync_service import (
     SupabaseMarketSyncService,
     _SupabasePriceRepository,
+    _SupabaseMarginRepository,
     _SupabaseStockUniverse,
     _SupabaseTDCCCheckpointRepository,
     _SupabaseTDCCRepository,
@@ -133,6 +139,86 @@ def test_supabase_adapters_upsert_normalized_price_and_tdcc_rows():
     assert client.upsert_calls[1][0] == "tdcc_distributions"
     assert client.upsert_calls[1][1][0]["holding_level"] == 1
     assert len(client.upsert_calls[1][1]) == 1
+
+
+def test_supabase_margin_sync_filters_universe_and_upserts_latest_snapshot(monkeypatch):
+    client = _Client()
+
+    class FakeMarginProvider:
+        def __init__(self, _client, *, url):
+            self.url = url
+            self.last_trade_date = "2026-08-28"
+            self.last_no_data = False
+            self.last_skipped_total_count = 1
+
+        def fetch(self):
+            market = "TWSE" if "twse" in self.url else "TPEX"
+            code = "2330" if market == "TWSE" else "3105"
+            return [
+                MarginHistory(
+                    trade_date="2026-08-28",
+                    stock_code=code,
+                    market=market,
+                    margin_buy=10,
+                    margin_sell=2,
+                    margin_cash_redemption=0,
+                    margin_previous_balance=100,
+                    margin_balance=108,
+                    short_buy=1,
+                    short_sell=0,
+                    short_stock_redemption=0,
+                    short_previous_balance=20,
+                    short_balance=21,
+                    offsetting_volume=0,
+                    margin_limit=200,
+                    margin_utilization=54.0,
+                )
+            ]
+
+    monkeypatch.setattr(market_sync_module, "TWSEMarginProvider", FakeMarginProvider)
+    monkeypatch.setattr(market_sync_module, "TPExMarginProvider", FakeMarginProvider)
+    service = SupabaseMarketSyncService(client, batch_size=10, backoff_seconds=0)
+
+    result = service.sync_margin_latest()
+
+    assert result["trade_date"] == "2026-08-28"
+    assert result["margin_count"] == 2
+    assert result["market_counts"] == {"TWSE": 1, "TPEX": 1}
+    assert result["skipped_total_count"] == 2
+    assert client.upsert_calls[-1][0] == "margin_history"
+    assert client.upsert_calls[-1][2] == "trade_date,stock_code"
+    assert client.upsert_calls[-1][1][0]["margin_limit"] == 200
+    assert client.upsert_calls[-1][1][0]["margin_utilization"] == 54.0
+
+
+def test_supabase_margin_repository_maps_all_usage_fields():
+    client = _Client()
+    service = SupabaseMarketSyncService(client, batch_size=10, backoff_seconds=0)
+    repository = _SupabaseMarginRepository(service.writer)
+
+    repository.upsert_many([
+        MarginHistory(
+            trade_date="2026-08-28",
+            stock_code="2330",
+            market="TWSE",
+            margin_buy=1,
+            margin_sell=2,
+            margin_cash_redemption=0,
+            margin_previous_balance=3,
+            margin_balance=4,
+            short_buy=5,
+            short_sell=6,
+            short_stock_redemption=0,
+            short_previous_balance=7,
+            short_balance=8,
+            margin_limit=9,
+            margin_utilization=44.4444,
+        )
+    ])
+
+    row = client.upsert_calls[-1][1][0]
+    assert row["margin_limit"] == 9
+    assert row["margin_utilization"] == 44.4444
 
 
 def test_supabase_insider_sync_filters_to_stock_universe_and_upserts(monkeypatch):

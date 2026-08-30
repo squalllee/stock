@@ -1225,6 +1225,67 @@ a:focus-visible {
   margin-bottom: 0;
 }
 
+.margin-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.margin-section h2 svg {
+  color: var(--accent);
+}
+
+.margin-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.margin-summary > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+
+.margin-summary span,
+.margin-summary small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.margin-summary strong {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.margin-summary small {
+  margin-top: 3px;
+  font-size: 9px;
+}
+
+.margin-summary .margin-rate {
+  border-color: rgba(8, 127, 112, 0.3);
+  background: var(--accent-soft);
+}
+
+.margin-summary .margin-rate strong {
+  color: var(--accent-strong);
+  font-size: 21px;
+}
+
 .range-toolbar {
   display: flex;
   align-items: center;
@@ -1961,6 +2022,14 @@ a:focus-visible {
 
   .detail-section {
     padding: 16px;
+  }
+
+  .margin-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .margin-summary .margin-rate {
+    grid-column: 1 / -1;
   }
 
   .range-toolbar {

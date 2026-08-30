@@ -105,6 +105,17 @@ def sync_daily_prices(
     return _market_service(supabase_client).sync_daily_prices(start_date, end_date)
 
 
+def sync_margin_latest(supabase_client: Any) -> Any:
+    """Synchronize the latest TWSE/TPEx margin usage snapshot."""
+
+    result = _market_service(supabase_client).sync_margin_latest()
+    if isinstance(result, Mapping) and result.get("skipped"):
+        return SyncSkipped(
+            str(result.get("reason") or "官方目前沒有新的融資融券資料")
+        )
+    return result
+
+
 def sync_tdcc_latest(supabase_client: Any) -> Any:
     """Synchronize the latest TDCC distribution directly into Supabase."""
 
@@ -266,6 +277,15 @@ def summarize_result(workflow: str, value: Any) -> str:
             "完成：每日成交行情 "
             f"{data.get('price_count', 0):,} 筆，日期 {data.get('trade_date') or '—'}"
         )
+    if workflow == "margin-latest":
+        market_counts = data.get("market_counts") or {}
+        return (
+            "完成：融資使用率 "
+            f"{data.get('margin_count', 0):,} 筆，日期 "
+            f"{data.get('trade_date') or data.get('latest_data_date') or '—'}"
+            f"（TWSE {market_counts.get('TWSE', 0):,}、"
+            f"TPEx {market_counts.get('TPEX', 0):,}）"
+        )
     if workflow == "tdcc-latest":
         return f"完成：TDCC 最新一期 {data.get('tdcc_count', 0):,} 筆"
     if workflow == "tdcc-year":
@@ -312,6 +332,7 @@ class DesktopSyncApp:
     WORKFLOWS: tuple[tuple[str, str, str], ...] = (
         ("stock-master", "股票主檔", "TWSE + TPEx 普通股票"),
         ("daily-prices", "每日成交行情", "同步選定日期區間"),
+        ("margin-latest", "融資使用率", "同步最新融資餘額／使用率"),
         ("tdcc-latest", "TDCC 最新一期", "同步官方最新股權分散"),
         ("tdcc-year", "TDCC 年度資料", "同步指定年度的每週資料"),
         (
@@ -353,7 +374,7 @@ class DesktopSyncApp:
         self.detail_var = tk.StringVar(
             value=(
                 "請先同步股票主檔，再同步 TDCC、每日成交行情、"
-                "內部人申報或年度內部人持股。"
+                "融資使用率、內部人申報或年度內部人持股。"
             )
         )
         self._events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -395,8 +416,8 @@ class DesktopSyncApp:
 
     def _configure_window(self) -> None:
         self.root.title("台股資料同步控制台")
-        self.root.geometry("760x620")
-        self.root.minsize(680, 520)
+        self.root.geometry("760x700")
+        self.root.minsize(680, 600)
         style = self.ttk.Style(self.root)
         try:
             style.theme_use("vista")
@@ -480,7 +501,7 @@ class DesktopSyncApp:
 
         price_date_row = self.ttk.Frame(action_frame)
         price_date_row.grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0)
+            row=4, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0)
         )
         self.ttk.Label(price_date_row, text="每日成交行情日期：").pack(side="left")
         self.ttk.Label(price_date_row, text="起").pack(side="left", padx=(8, 3))
@@ -502,7 +523,7 @@ class DesktopSyncApp:
         ).pack(side="left", padx=(8, 0))
 
         year_row = self.ttk.Frame(action_frame)
-        year_row.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
+        year_row.grid(row=5, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
         self.ttk.Label(year_row, text="年度資料的年份（TDCC／內部人）：").pack(side="left")
         self.ttk.Spinbox(
             year_row,
@@ -604,6 +625,7 @@ class DesktopSyncApp:
         tasks: dict[str, Callable[[], Any]] = {
             "stock-master": lambda: sync_stock_master(self.supabase_client),
             "daily-prices": daily_price_task,
+            "margin-latest": lambda: sync_margin_latest(self.supabase_client),
             "tdcc-latest": lambda: sync_tdcc_latest(self.supabase_client),
             "tdcc-year": lambda: sync_tdcc_year(
                 self.supabase_client, year or date.today().year

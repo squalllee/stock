@@ -27,6 +27,9 @@ def test_health_and_pages_render(web_client):
     assert "tdcc-low-chart" in detail.text
     assert "14 級距以上持股比例總和" in detail.text
     assert "6 級距以下持股比例總和" in detail.text
+    overview = web_client.get("/api/v1/stocks/2330/overview").json()
+    assert "margin_limit" in overview["margin"]
+    assert "margin_utilization" in overview["margin"]
     home = web_client.get("/")
     assert "同步所有資料" in home.text
     assert "data-sync-all" in home.text

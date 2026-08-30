@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date
 from typing import Any
 
@@ -15,6 +16,7 @@ from .margin_base import (
     MarginProvider,
     build_date_parameter,
     build_query_url,
+    calculate_margin_utilization,
     find_field_index,
     is_no_data_status,
     normalize_trade_date,
@@ -118,6 +120,12 @@ class TWSEMarginProvider(MarginProvider):
             ),
             "margin_balance": find_field_index(
                 fields, ("今日餘額",), occurrence=0, market=self.market
+            ),
+            "margin_limit": find_field_index(
+                fields,
+                ("次一營業日限額", "資限額"),
+                occurrence=0,
+                market=self.market,
             ),
             "short_buy": find_field_index(
                 fields, ("買進",), occurrence=1, market=self.market
@@ -223,6 +231,19 @@ class TWSEMarginProvider(MarginProvider):
                     market=self.market,
                     field="offsetting_volume",
                     record_index=row_index,
+                ),
+                margin_limit=parse_optional_non_negative_int(
+                    _row_value(row, indexes["margin_limit"], market=self.market, field="margin_limit", row_index=row_index),
+                    market=self.market,
+                    field="margin_limit",
+                    record_index=row_index,
+                ),
+            )
+            record = replace(
+                record,
+                margin_utilization=calculate_margin_utilization(
+                    record.margin_balance,
+                    record.margin_limit,
                 ),
             )
             validate_margin_record(record, self.market)
