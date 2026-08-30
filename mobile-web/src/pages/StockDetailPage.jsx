@@ -34,6 +34,7 @@ const RANGE_OPTIONS = [12, 26, 52];
 
 export default function StockDetailPage({ stockCode }) {
   const [weeks, setWeeks] = useState(26);
+  const [activeInsightTab, setActiveInsightTab] = useState("holdings");
   const largeHolderOption = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return getLargeHolderOption(
@@ -95,8 +96,6 @@ export default function StockDetailPage({ stockCode }) {
         </div>
       </section>
 
-      <MarginUsage margin={margin} />
-
       {!latest ? (
         <EmptyState title="尚無 TDCC 資料" description="請先在同步工具更新這支股票的 TDCC 資料。" />
       ) : (
@@ -153,8 +152,13 @@ export default function StockDetailPage({ stockCode }) {
             <TrendChart history={history} annualBaselines={annualBaselines} />
           </section>
 
-          <InsiderTransactions transactions={visibleInsiderTransactions} />
-          <PlannedInsiderTransfers transactions={plannedInsiderTransactions} />
+          <InsightTabs
+            activeTab={activeInsightTab}
+            onTabChange={setActiveInsightTab}
+            insiderTransactions={visibleInsiderTransactions}
+            plannedInsiderTransactions={plannedInsiderTransactions}
+            margin={margin}
+          />
 
           <section className="detail-section">
             <div className="section-heading compact">
@@ -184,44 +188,112 @@ export default function StockDetailPage({ stockCode }) {
   );
 }
 
-function MarginUsage({ margin }) {
-  if (!margin) return null;
-  const utilization = margin.margin_utilization === null
-    ? "無資料"
-    : formatRatio(margin.margin_utilization);
+function InsightTabs({
+  activeTab,
+  onTabChange,
+  insiderTransactions,
+  plannedInsiderTransactions,
+  margin,
+}) {
+  const tabs = [
+    { id: "holdings", label: "內部人持股", count: insiderTransactions.length },
+    { id: "planned", label: "預定轉讓", count: plannedInsiderTransactions.length },
+    { id: "margin", label: "融資使用率", count: null },
+  ];
   return (
-    <section className="detail-section margin-section" aria-labelledby="margin-title">
+    <section className="detail-section insight-tabs" aria-label="內部人與融資資料">
+      <div className="insight-tab-list" role="tablist" aria-label="資料頁籤">
+        {tabs.map((tab) => {
+          const tabId = `insight-tab-${tab.id}`;
+          return (
+            <button
+              key={tab.id}
+              id={tabId}
+              type="button"
+              className={`insight-tab ${activeTab === tab.id ? "active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              aria-controls={`insight-panel-${tab.id}`}
+              onClick={() => onTabChange(tab.id)}
+            >
+              <span>{tab.label}</span>
+              {tab.count !== null ? <small>{tab.count} 筆</small> : null}
+            </button>
+          );
+        })}
+      </div>
+      {tabs.map((tab) => (
+        <div
+          key={tab.id}
+          id={`insight-panel-${tab.id}`}
+          className="insight-tab-panel"
+          role="tabpanel"
+          tabIndex="0"
+          hidden={activeTab !== tab.id}
+          aria-labelledby={`insight-tab-${tab.id}`}
+        >
+          {tab.id === "holdings" ? (
+            <InsiderTransactions transactions={insiderTransactions} embedded />
+          ) : tab.id === "planned" ? (
+            <PlannedInsiderTransfers transactions={plannedInsiderTransactions} embedded />
+          ) : (
+            <MarginUsage margin={margin} embedded />
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function MarginUsage({ margin, embedded = false }) {
+  const utilization = margin?.margin_utilization === null
+    ? "無資料"
+    : margin
+      ? formatRatio(margin.margin_utilization)
+      : "無資料";
+  return (
+    <section
+      className={embedded ? "margin-section" : "detail-section margin-section"}
+      aria-labelledby="margin-title"
+    >
       <div className="section-heading compact">
         <div>
           <h2 id="margin-title"><Gauge size={19} aria-hidden="true" /> 融資使用率</h2>
           <p>官方最新融資餘額與限額；TWSE 使用率由餘額 ÷ 次一營業日限額計算。</p>
         </div>
-        <small className="section-meta">{formatDate(margin.trade_date)}</small>
+        <small className="section-meta">{margin ? formatDate(margin.trade_date) : "暫無資料"}</small>
       </div>
-      <div className="margin-summary">
-        <div className="margin-rate">
-          <span>使用率</span>
-          <strong>{utilization}</strong>
-          <small>{margin.market === "TPEX" ? "TPEx 官方百分比" : "TWSE 依官方限額推算"}</small>
+      {margin ? (
+        <div className="margin-summary">
+          <div className="margin-rate">
+            <span>使用率</span>
+            <strong>{utilization}</strong>
+            <small>{margin.market === "TPEX" ? "TPEx 官方百分比" : "TWSE 依官方限額推算"}</small>
+          </div>
+          <div>
+            <span>融資餘額</span>
+            <strong>{formatLots(margin.margin_balance)}</strong>
+            <small>{formatShares(margin.margin_balance)}</small>
+          </div>
+          <div>
+            <span>融資限額</span>
+            <strong>{margin.margin_limit === null ? "無資料" : formatLots(margin.margin_limit)}</strong>
+            <small>{margin.margin_limit === null ? "官方未提供" : "張"}</small>
+          </div>
         </div>
-        <div>
-          <span>融資餘額</span>
-          <strong>{formatLots(margin.margin_balance)}</strong>
-          <small>{formatShares(margin.margin_balance)}</small>
-        </div>
-        <div>
-          <span>融資限額</span>
-          <strong>{margin.margin_limit === null ? "無資料" : formatLots(margin.margin_limit)}</strong>
-          <small>{margin.margin_limit === null ? "官方未提供" : "張"}</small>
-        </div>
-      </div>
+      ) : (
+        <p className="insider-empty">目前沒有可用的融資使用率資料。</p>
+      )}
     </section>
   );
 }
 
-function InsiderTransactions({ transactions }) {
+function InsiderTransactions({ transactions, embedded = false }) {
   return (
-    <section className="detail-section insider-section" aria-labelledby="insider-title">
+    <section
+      className={embedded ? "insider-section" : "detail-section insider-section"}
+      aria-labelledby="insider-title"
+    >
       <div className="section-heading compact">
         <div>
           <h2 id="insider-title">公司內部人申報</h2>
@@ -245,10 +317,12 @@ function InsiderTransactions({ transactions }) {
   );
 }
 
-function PlannedInsiderTransfers({ transactions }) {
+function PlannedInsiderTransfers({ transactions, embedded = false }) {
   return (
     <section
-      className="detail-section insider-section planned-insider-section"
+      className={embedded
+        ? "insider-section planned-insider-section"
+        : "detail-section insider-section planned-insider-section"}
       aria-labelledby="planned-insider-title"
     >
       <div className="section-heading compact">
