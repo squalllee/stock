@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { filterToLatestHoldingMonth } from "../src/lib/insider.js";
+import {
+  filterPlannedTransfers,
+  filterToLatestHoldingMonth,
+} from "../src/lib/insider.js";
 
 describe("insider display helpers", () => {
   it("keeps only latest-month MOPS rows with a buy or sell", () => {
@@ -56,5 +59,20 @@ describe("insider display helpers", () => {
     ];
 
     assert.deepEqual(filterToLatestHoldingMonth(rows), []);
+  });
+
+  it("keeps only positive planned-transfer disclosures for the planned card", () => {
+    const planned = {
+      report_type: "planned_transfer",
+      transaction_type: "transfer",
+      planned_shares: "16000000",
+      insider_name: "華瑋投資股份有限公司",
+    };
+    assert.deepEqual(filterPlannedTransfers([
+      planned,
+      { ...planned, planned_shares: "0", insider_name: "無張數申報" },
+      { report_type: "untransferred", planned_shares: "1000" },
+      { report_type: "after_report", transaction_type: "sell", shares_changed: "1000" },
+    ]), [planned]);
   });
 });

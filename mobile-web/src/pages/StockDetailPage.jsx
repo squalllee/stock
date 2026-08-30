@@ -28,7 +28,7 @@ import {
   marketLabel,
 } from "../lib/format.js";
 import { getLargeHolderOption, largeHolderQuery } from "../lib/holderRanges.js";
-import { filterToLatestHoldingMonth } from "../lib/insider.js";
+import { filterPlannedTransfers, filterToLatestHoldingMonth } from "../lib/insider.js";
 
 const RANGE_OPTIONS = [12, 26, 52];
 
@@ -79,6 +79,7 @@ export default function StockDetailPage({ stockCode }) {
     margin = null,
   } = state.data;
   const visibleInsiderTransactions = filterToLatestHoldingMonth(insiderTransactions);
+  const plannedInsiderTransactions = filterPlannedTransfers(insiderTransactions);
   return (
     <div className="page detail-page">
       <section className="detail-hero" aria-labelledby="detail-title">
@@ -153,6 +154,7 @@ export default function StockDetailPage({ stockCode }) {
           </section>
 
           <InsiderTransactions transactions={visibleInsiderTransactions} />
+          <PlannedInsiderTransfers transactions={plannedInsiderTransactions} />
 
           <section className="detail-section">
             <div className="section-heading compact">
@@ -243,6 +245,35 @@ function InsiderTransactions({ transactions }) {
   );
 }
 
+function PlannedInsiderTransfers({ transactions }) {
+  return (
+    <section
+      className="detail-section insider-section planned-insider-section"
+      aria-labelledby="planned-insider-title"
+    >
+      <div className="section-heading compact">
+        <div>
+          <h2 id="planned-insider-title">內部人預定轉讓</h2>
+          <p>顯示 MOPS 事前申報的預定轉讓股數與期間；申報不代表交易已完成。</p>
+        </div>
+        <small className="section-meta">{transactions.length} 筆</small>
+      </div>
+      {transactions.length ? (
+        <div className="insider-list">
+          {transactions.map((item) => (
+            <InsiderCard key={insiderCardKey(item)} item={item} />
+          ))}
+        </div>
+      ) : (
+        <p className="insider-empty">目前沒有這支股票的內部人預定轉讓申報。</p>
+      )}
+      <p className="insider-disclaimer">
+        本區資料為事前申報，實際成交結果以後續 MOPS 事後申報為準。
+      </p>
+    </section>
+  );
+}
+
 function insiderCardKey(item) {
   return [
     item.source || "source",
@@ -258,9 +289,12 @@ function insiderCardKey(item) {
 
 function InsiderCard({ item }) {
   const afterReport = item.report_type === "after_report";
+  const plannedShares = Number(item.planned_shares);
   const displayedShares = afterReport
     ? item.after_shares ?? item.current_shares ?? item.shares_changed
-    : item.shares_changed;
+    : Number.isFinite(plannedShares) && plannedShares > 0
+      ? item.planned_shares
+      : item.shares_changed;
   return (
     <article className={`insider-card ${item.report_type}`}>
       <div className="insider-card-head">
@@ -289,7 +323,7 @@ function InsiderCard({ item }) {
           <small>{item.insider_role}</small>
         </div>
         <div>
-          <span>{afterReport ? "月底持股" : "股數"}</span>
+          <span>{afterReport ? "月底持股" : "預定股數"}</span>
           <strong>{formatLots(displayedShares)}</strong>
           <small>{formatShares(displayedShares)}</small>
         </div>

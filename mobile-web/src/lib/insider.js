@@ -18,6 +18,22 @@ export function filterToLatestHoldingMonth(transactions) {
   return tradeRows.filter((row) => reportMonth(row.report_date) === latestMonth);
 }
 
+/**
+ * Keep positive MOPS planned-transfer disclosures for their own card.
+ * Planned transfers are intentionally separate from completed buy/sell rows:
+ * a filing announces an intended transfer and does not prove that it was
+ * executed.
+ */
+export function filterPlannedTransfers(transactions) {
+  return (transactions || []).filter((row) => {
+    if (row?.report_type !== "planned_transfer") return false;
+    return [row.planned_shares, row.shares_changed].some((value) => {
+      const shares = Number(value);
+      return Number.isFinite(shares) && shares > 0;
+    });
+  });
+}
+
 function isTradeRow(row) {
   return (
     row?.report_type === "after_report"
