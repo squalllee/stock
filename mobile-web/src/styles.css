@@ -2021,6 +2021,12 @@ a:focus-visible {
     gap: 8px;
   }
 
+  /* The insider column makes the desktop four-column layout too narrow on
+     phones; use two rows so holder counts remain readable. */
+  .week-main.has-insider {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .week-delta {
     grid-column: 2;
     min-width: 0;
